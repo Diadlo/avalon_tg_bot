@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::vec::Vec;
 use rand::{seq::SliceRandom, RngCore};
-use futures::{executor, channel::{oneshot::{self, Sender, Receiver}, mpsc::{self, UnboundedSender, UnboundedReceiver}}, SinkExt};
+use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 /*
 Start:
@@ -27,7 +28,7 @@ Game:
   1. Repeat
 */
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 enum Role {
     Mordred,
     Morgen,
@@ -53,11 +54,6 @@ impl Role {
 
 type ID=u8;
 
-struct Person {
-    id: ID,
-    role: Role,
-}
-
 #[derive(PartialEq, Clone)]
 enum TeamVote {
     Approve,
@@ -70,13 +66,8 @@ enum MissionVote {
     Fail
 }
 
-struct Mission {
-    team: Vec<Person>,
-    votes: Vec<bool>,
-}
-
 #[derive(PartialEq, Clone, Debug)]
-enum GameResult {
+pub enum GameResult {
     GoodWins,
     BadWins
 }
@@ -84,9 +75,9 @@ enum GameResult {
 const MAX_TRY_COUNT: u8 = 5;
 
 pub struct Game {
-    team_channels: (Sender<Vec<ID>>, Receiver<Vec<ID>>),
-    vote_channels: (UnboundedSender<Vec<TeamVote>>, UnboundedReceiver<Vec<TeamVote>>),
-    mission_channels: (Sender<Vec<MissionVote>>, Receiver<Vec<MissionVote>>),
+    team_channels:    (mpsc::UnboundedSender<Vec<ID>>,          mpsc::UnboundedReceiver<Vec<ID>>),
+    vote_channels:    (mpsc::UnboundedSender<Vec<TeamVote>>,    mpsc::UnboundedReceiver<Vec<TeamVote>>),
+    mission_channels: (mpsc::UnboundedSender<Vec<MissionVote>>, mpsc::UnboundedReceiver<Vec<MissionVote>>),
 
     players: Vec<Role>,
 
@@ -102,7 +93,7 @@ pub struct Game {
     missions: Vec<MissionVote>
 }
 
-fn is_mission_approved(votes: Vec<TeamVote>) -> bool {
+fn is_mission_approved(votes: &Vec<TeamVote>) -> bool {
     if votes.len() == 0 {
         return false
     }
@@ -137,7 +128,7 @@ fn get_expected_team_size(mission: usize,
 
 fn calc_mission_result(mission: usize,
                        players: usize,
-                       mission_votes: Vec<MissionVote>) -> MissionVote {
+                       mission_votes: &Vec<MissionVote>) -> MissionVote {
     let fails_count = mission_votes.iter()
         .filter(|x| **x == MissionVote::Fail)
         .count();
@@ -155,7 +146,7 @@ fn calc_mission_result(mission: usize,
     }
 }
 
-fn calc_winner(mission_votes: Vec<MissionVote>) -> Option<GameResult> {
+fn calc_winner(mission_votes: &Vec<MissionVote>) -> Option<GameResult> {
     let fails_count = mission_votes.iter()
         .filter(|x| **x == MissionVote::Fail)
         .count();
@@ -175,9 +166,9 @@ impl Game {
         let mut rng = rand::thread_rng();
 
         let mut g = Game {
-            team_channels: oneshot::channel::<Vec<ID>>(),
-            vote_channels: mpsc::unbounded::<Vec<TeamVote>>(),
-            mission_channels: oneshot::channel::<Vec<MissionVote>>(),
+            team_channels: mpsc::unbounded_channel(),
+            vote_channels: mpsc::unbounded_channel(),
+            mission_channels: mpsc::unbounded_channel(),
 
             players: match number {
                 5 => vec!(Role::Mordred, Role::Morgen,
@@ -237,19 +228,19 @@ impl Game {
         Ok(())
     }
 
-    pub fn add_vote(&self, from: ID, vote: TeamVote) -> Result<(), Box<dyn Error>> {
+    pub fn add_vote(&mut self, from: ID, vote: TeamVote) -> Result<(), Box<dyn Error>> {
         self.votes[from as usize] = Some(vote);
 
         if !self.votes.contains(&Option::None) {
             let votes = self.votes.iter()
-                .map(|x| x.unwrap())
+                .map(|x| x.clone().unwrap())
                 .collect();
             self.vote_channels.0.send(votes);
         }
         Ok(())
     }
 
-    pub fn submit_for_mission(&self, from: ID, vote: MissionVote) -> Result<(), Box<dyn Error>> {
+    pub fn submit_for_mission(&mut self, from: ID, vote: MissionVote) -> Result<(), Box<dyn Error>> {
         if !self.current_team.contains(&from) {
             return Err("Vote can only be sent by current team player".into())
         }
@@ -261,72 +252,161 @@ impl Game {
         self.mission_votes.push(vote);
 
         if self.mission_votes.len() == self.current_team.len() {
-            self.mission_channels.0.send(self.mission_votes);
+            self.mission_channels.0.send(self.mission_votes.clone());
         }
         Ok(())
     }
 
-    pub fn start(&self) -> Result<GameResult, Box<dyn Error>> {
-        let fut = async {
-            let mut mission_votes = Vec::<MissionVote>::new();
-            let team_votes = Vec::<TeamVote>::new();
+    pub fn get_missions(&self) -> Vec<MissionVote> {
+        return self.missions.clone()
+    }
 
-            let current_mission = self.missions.len() + 1;
-            let number_of_players = self.players.len();
+    pub async fn start(&mut self) -> Result<GameResult, Box<dyn Error>> {
+        let mut mission_votes = Vec::<MissionVote>::new();
+        let mut team_votes = Vec::<TeamVote>::new();
 
-            self.expected_team_size = get_expected_team_size(current_mission,
-                                                             number_of_players).unwrap();
+        let current_mission = self.missions.len() + 1;
+        let number_of_players = self.players.len();
 
-            while calc_winner(mission_votes) == None {
-                while !is_mission_approved(team_votes) && self.try_count < MAX_TRY_COUNT {
-                    // Wait for the team
-                    self.current_team = self.team_channels.1.await?;
+        self.expected_team_size = get_expected_team_size(current_mission,
+                                                            number_of_players).unwrap();
 
-                    println!("Suggested team: {:?}", self.current_team);
+        while calc_winner(&mission_votes) == None {
+            while !is_mission_approved(&team_votes) && self.try_count < MAX_TRY_COUNT {
+                // Wait for the team
+                self.current_team = self.team_channels.1.recv().await.unwrap();
 
-                    team_votes = self.vote_channels.1.await?;
-                    self.try_count += 1;
-                }
+                println!("Suggested team: {:?}", self.current_team);
 
-                if self.try_count == MAX_TRY_COUNT {
-                    return Ok(GameResult::BadWins);
-                }
-
-                self.try_count = 0;
-
-                mission_votes = self.mission_channels.1.await?;
-
-                let result = calc_mission_result(current_mission,
-                    number_of_players, mission_votes);
-
-                // TODO: Send notification to a separate channel
-                self.missions.push(result);
+                team_votes = self.vote_channels.1.recv().await.unwrap();
+                self.try_count += 1;
             }
 
-            // TODO: Give a chance to guess Merlin
-            Ok(calc_winner(mission_votes).unwrap())
-        };
+            if self.try_count == MAX_TRY_COUNT {
+                return Ok(GameResult::BadWins);
+            }
 
-        executor::block_on(fut)
+            self.try_count = 0;
+
+            mission_votes = self.mission_channels.1.recv().await.unwrap();
+
+            let result = calc_mission_result(current_mission,
+                number_of_players, &mission_votes);
+
+            // TODO: Send notification to a separate channel
+            self.missions.push(result);
+        }
+
+        // TODO: Give a chance to guess Merlin
+        Ok(calc_winner(&mission_votes).unwrap())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::game::{MissionVote, calc_winner, GameResult};
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex;
+
+    use crate::game::{Game, TeamVote, MissionVote, calc_winner, GameResult};
 
     #[test]
-    fn check_winner_calculator() {
+    fn calc_clear_good_winner() {
         let mut mission_votes = Vec::<MissionVote>::new();
-        assert_eq!(calc_winner(mission_votes), None);
+        assert_eq!(calc_winner(&mission_votes), None);
 
         mission_votes.push(MissionVote::Success);
-        assert_eq!(calc_winner(mission_votes), None);
+        assert_eq!(calc_winner(&mission_votes), None);
 
         mission_votes.push(MissionVote::Success);
-        assert_eq!(calc_winner(mission_votes), None);
+        assert_eq!(calc_winner(&mission_votes), None);
 
         mission_votes.push(MissionVote::Success);
-        assert_eq!(calc_winner(mission_votes), Some(GameResult::GoodWins));
+        assert_eq!(calc_winner(&mission_votes), Some(GameResult::GoodWins));
+    }
+
+    #[test]
+    fn calc_clear_bad_winner() {
+        let mut mission_votes = Vec::<MissionVote>::new();
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), Some(GameResult::BadWins));
+    }
+
+    #[test]
+    fn calc_winner_mixed_good() {
+        let mut mission_votes = Vec::<MissionVote>::new();
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Success);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Success);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Success);
+        assert_eq!(calc_winner(&mission_votes), Some(GameResult::GoodWins));
+    }
+
+    #[test]
+    fn calc_winner_mixed_bad() {
+        let mut mission_votes = Vec::<MissionVote>::new();
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Success);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Success);
+        assert_eq!(calc_winner(&mission_votes), None);
+
+        mission_votes.push(MissionVote::Fail);
+        assert_eq!(calc_winner(&mission_votes), Some(GameResult::BadWins));
+    }
+
+    fn all_votes_approve(g: &mut Game) {
+        for i in 0..7 {
+            g.add_vote(i, TeamVote::Approve);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_game() {
+        let mut g = Game::setup(7);
+        let game_fut = async {
+            let result = g.start().await.unwrap();
+            assert_eq!(result, GameResult::GoodWins);
+        };
+
+        let test_fut = async {
+            println!("Players: {:?}", g.get_players());
+            g.suggest_team(0, vec![0, 1]);
+
+            all_votes_approve(&mut g);
+
+            g.submit_for_mission(0, MissionVote::Success);
+            g.submit_for_mission(1, MissionVote::Success);
+            g.submit_for_mission(2, MissionVote::Success);
+        };
+
+        tokio::join!(game_fut, test_fut);
     }
 }

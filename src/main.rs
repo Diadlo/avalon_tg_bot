@@ -1,6 +1,7 @@
 mod game;
 
-fn main() {
-    let g = game::Game::setup(5);
-    g.start();
+#[tokio::main]
+async fn main() {
+    let mut g = game::Game::setup(5);
+    g.start().await;
 }
