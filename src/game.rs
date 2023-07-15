@@ -670,6 +670,22 @@ mod tests {
         calc_winner_test(vec![0, 1, 0, 1, 0], Some(GameResult::BadWins));
     }
 
+    #[test]
+    fn test_mermaid_id_overflow() {
+        assert_eq!(calc_mermaid_id(2, 3), 1);
+        assert_eq!(calc_mermaid_id(1, 3), 0);
+        assert_eq!(calc_mermaid_id(0, 3), 2);
+    }
+
+    #[test]
+    fn test_team_size_for_7_players() {
+        assert_eq!(get_expected_team_size(1, 7), Some(2));
+        assert_eq!(get_expected_team_size(2, 7), Some(3));
+        assert_eq!(get_expected_team_size(3, 7), Some(3));
+        assert_eq!(get_expected_team_size(4, 7), Some(4));
+        assert_eq!(get_expected_team_size(5, 7), Some(4));
+    }
+
     async fn test_send_team_votes(cli: &mut GameClient, votes: &Vec<TeamVote>) -> Result<(), Box<dyn Error>> {
         for (i, vote) in votes.iter().enumerate() {
             cli.add_team_vote(i as ID, vote.clone()).await?;
@@ -1065,21 +1081,5 @@ mod tests {
         };
 
         run_test_game(expected).await;
-    }
-
-    #[test]
-    fn test_mermaid_id_overflow() {
-        assert_eq!(calc_mermaid_id(2, 3), 1);
-        assert_eq!(calc_mermaid_id(1, 3), 0);
-        assert_eq!(calc_mermaid_id(0, 3), 2);
-    }
-
-    #[test]
-    fn test_team_size_for_7_players() {
-        assert_eq!(get_expected_team_size(1, 7), Some(2));
-        assert_eq!(get_expected_team_size(2, 7), Some(3));
-        assert_eq!(get_expected_team_size(3, 7), Some(3));
-        assert_eq!(get_expected_team_size(4, 7), Some(4));
-        assert_eq!(get_expected_team_size(5, 7), Some(4));
     }
 }
