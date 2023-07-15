@@ -39,11 +39,14 @@ pub enum Role {
     Mordred,
     Morgen,
     Oberon,
+    Assassin,
     Bad,
 
     Merlin,
     Percival,
     Good,
+    // The same as Good, but added to simplify code because now team contains only unique roles
+    Good2,
 }
 
 impl Role {
@@ -51,9 +54,14 @@ impl Role {
         match self {
             Role::Merlin |
             Role::Percival |
-            Role::Good => true,
+            Role::Good |
+            Role::Good2 => true,
 
-            _ => false
+            Role::Mordred |
+            Role::Morgen |
+            Role::Assassin |
+            Role::Oberon |
+            Role::Bad => false,
         }
     }
 }
@@ -305,15 +313,15 @@ fn calc_mermaid_id(crown_id: ID, players: usize) -> ID {
 fn default_team(players: usize) -> Vec<Role> {
     match players {
         5 => vec!(
-            Role::Merlin, Role::Good, Role::Good,
+            Role::Merlin, Role::Good, Role::Good2,
             Role::Mordred, Role::Morgen,
         ),
         6 => vec!(
-            Role::Merlin, Role::Percival, Role::Good, Role::Good,
+            Role::Merlin, Role::Percival, Role::Good, Role::Good2,
             Role::Mordred, Role::Morgen,
         ),
         7 => vec!(
-            Role::Merlin, Role::Percival, Role::Good, Role::Good,
+            Role::Merlin, Role::Percival, Role::Good, Role::Good2,
             Role::Mordred, Role::Morgen, Role::Oberon,
         ),
         _ => panic!("Not supported number of players")
@@ -479,11 +487,13 @@ impl Game {
             Role::Mordred |
             Role::Morgen |
             Role::Oberon |
+            Role::Assassin |
             Role::Bad => Team::Bad,
 
             Role::Merlin |
             Role::Percival |
-            Role::Good => Team::Good,
+            Role::Good |
+            Role::Good2 => Team::Good,
         }
     }
 
@@ -891,7 +901,7 @@ mod tests {
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
                     mermaid_check: None,
                 }, GameTurn {
-                    suggestion: vec![Role::Merlin, Role::Good, Role::Good],
+                    suggestion: vec![Role::Merlin, Role::Good, Role::Good2],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
@@ -902,7 +912,7 @@ mod tests {
                         word: Team::Good,
                     }),
                 }, GameTurn {
-                    suggestion: vec![Role::Merlin, Role::Good, Role::Good],
+                    suggestion: vec![Role::Merlin, Role::Good, Role::Good2],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
@@ -935,7 +945,7 @@ mod tests {
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
                     mermaid_check: None,
                 }, GameTurn {
-                    suggestion: vec![Role::Merlin, Role::Good, Role::Good],
+                    suggestion: vec![Role::Merlin, Role::Good, Role::Good2],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
@@ -946,7 +956,7 @@ mod tests {
                         word: Team::Good,
                     }),
                 }, GameTurn {
-                    suggestion: vec![Role::Merlin, Role::Good, Role::Good],
+                    suggestion: vec![Role::Merlin, Role::Good, Role::Good2],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
@@ -1014,7 +1024,7 @@ mod tests {
             turns: vec![
                 // Success
                 GameTurn {
-                    suggestion: vec![Role::Good, Role::Good],
+                    suggestion: vec![Role::Good, Role::Good2],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
@@ -1022,7 +1032,7 @@ mod tests {
                 },
                 // Success
                 GameTurn {
-                    suggestion: vec![Role::Good, Role::Good, Role::Mordred],
+                    suggestion: vec![Role::Good, Role::Good2, Role::Mordred],
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
@@ -1035,7 +1045,7 @@ mod tests {
                 },
                 // Reject
                 GameTurn {
-                    suggestion: vec![Role::Good, Role::Good, Role::Mordred],
+                    suggestion: vec![Role::Good, Role::Good2, Role::Mordred],
                     team_votes: vec![TeamVote::Reject; 7],
                     try_count: 2,
                     mission_votes: vec![],
