@@ -358,7 +358,9 @@ impl Game {
 
             expected_team_size: 0,
             crown_id,
-            mermaid_id: calc_mermaid_id(crown_id, number),
+            // Actually this should be crown_id - 1, but in main loop we do "next_turn"
+            // in the beginning, so it will be incremented
+            mermaid_id: crown_id,
         };
 
         raw_info.players.shuffle(&mut rng);
@@ -763,10 +765,8 @@ mod tests {
         // During real game players and crown are assigned randomly.
         // But for testing purposes we will assign them manually.
         g.info.lock().await.players = expected.players.clone();
-        // Due to implementation actual crown ID is always 1 more than set during init
-        let crown_id = (expected.start_crown_id as i32 - 1).rem_euclid(expected.num as i32) as ID;
-        g.info.lock().await.crown_id = crown_id;
-        g.info.lock().await.mermaid_id = calc_mermaid_id(crown_id, expected.num);
+        g.info.lock().await.crown_id = calc_mermaid_id(expected.start_crown_id, expected.num);
+        g.info.lock().await.mermaid_id = calc_mermaid_id(expected.start_crown_id, expected.num);
 
         let game_fut = async {
             g.start().await.unwrap();
@@ -906,7 +906,7 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 5,
+                        holder: 6,
                         selection: 0,
                         check_result: Team::Good,
                         word: Team::Good,
@@ -950,7 +950,7 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 5,
+                        holder: 6,
                         selection: 0,
                         check_result: Team::Good,
                         word: Team::Good,
@@ -1037,7 +1037,7 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 5,
+                        holder: 6,
                         selection: 4,
                         check_result: Team::Bad,
                         word: Team::Good,
