@@ -92,6 +92,7 @@ pub struct GameInfo {
     missions: Vec<MissionVote>
 }
 
+#[derive(PartialEq, Clone, Debug)]
 pub enum GameEvent {
     Turn(ID, usize), // Crown ID, team size for the mission
     TeamSuggested(Vec<ID>),
@@ -535,12 +536,11 @@ impl Game {
         let number_of_players = self.get_number_of_players().await;
 
         while self.calc_winner().await == None {
-            let mut try_count = 0;
+            let mut try_count = 1;
 
             loop {
                 println!("New turn");
                 self.next_turn().await?;
-                try_count += 1;
 
                 let team = self.get_suggested_team().await;
                 self.set_current_team(&team).await;
@@ -558,6 +558,7 @@ impl Game {
                     break;
                 }
 
+                try_count += 1;
                 self.send_team_vote_result(GameEvent::TeamRejected(try_count)).await?;
                 println!("Mission rejected. Try count: {}", try_count);
 
@@ -621,9 +622,9 @@ impl Game {
 mod tests {
     use std::error::Error;
 
-    use crate::game::{get_expected_team_size, ID, GameEvent, default_team, find_merlin};
+    use crate::game::{get_expected_team_size, ID, GameEvent, default_team, find_merlin, MAX_TRY_COUNT};
 
-    use super::{Game, TeamVote, MissionVote, calc_winner, GameResult, Team};
+    use super::{Game, TeamVote, MissionVote, calc_winner, GameResult, Team, Role};
 
     use super::{GameClient, calc_mermaid_id};
 
@@ -691,59 +692,31 @@ mod tests {
         team: Vec<ID>,
     }
 
-    #[tokio::test]
-    async fn test_game() {
-        let num = 7;
-        let (mut g, mut cli) = Game::setup(num);
+    struct ExpectedGame {
+        num: usize,
+        players: Vec<Role>,
+        start_crown_id: ID,
+        suggestions: Vec<TeamSuggestion>,
+        team_votes: Vec<Vec<TeamVote>>,
+        // Conclusion of team_votes
+        team_approves: Vec<TeamVote>,
+        try_counts: Vec<u8>,
+        mission_votes: Vec<Vec<(ID, MissionVote)>>,
+        mermaid_checks: Vec<MermaidCheck>,
+        merlin_check: Option<ID>,
+        expected_game_result: GameResult,
+    }
 
-        let players = default_team(num);
-        let start_crown_id = 0;
-
-        let suggestions = vec![
-            TeamSuggestion{ from: 0, team: vec![0, 1] },
-            TeamSuggestion{ from: 1, team: vec![0, 1, 2] },
-            TeamSuggestion{ from: 2, team: vec![0, 1, 2] },
-        ];
-
-        let team_votes = vec![
-            vec![TeamVote::Approve; num],
-            vec![TeamVote::Approve; num],
-            vec![TeamVote::Approve; num],
-        ];
-
-        let team_approves = vec![TeamVote::Approve; 3];
-
-        let try_counts = vec![1; 3];
-
-        let mission_votes = vec![
-            vec![(0, MissionVote::Success), (1, MissionVote::Success)],
-            vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
-            vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
-        ];
-
-        let mermaid_checks = vec![MermaidCheck {
-            holder: 5,
-            selection: 0,
-            check_result: Team::Good,
-            word: Team::Good,
-        }, MermaidCheck {
-            holder: 0,
-            selection: 1,
-            check_result: Team::Good,
-            word: Team::Good,
-        }];
-
-        // Actually merlin is 0
-        let merlin_check = Some(1);
-        let expected_game_result = GameResult::GoodWins;
+    async fn run_test_game(expected: ExpectedGame) {
+        let (mut g, mut cli) = Game::setup(expected.num);
 
         // During real game players and crown are assigned randomly.
         // But for testing purposes we will assign them manually.
-        g.info.lock().await.players = players.clone();
+        g.info.lock().await.players = expected.players.clone();
         // Due to implementation actual crown ID is always 1 more than set during init
-        let crown_id = (start_crown_id as i32 - 1).rem_euclid(num as i32) as ID;
+        let crown_id = (expected.start_crown_id as i32 - 1).rem_euclid(expected.num as i32) as ID;
         g.info.lock().await.crown_id = crown_id;
-        g.info.lock().await.mermaid_id = calc_mermaid_id(crown_id, num);
+        g.info.lock().await.mermaid_id = calc_mermaid_id(crown_id, expected.num);
 
         let game_fut = async {
             g.start().await.unwrap();
@@ -751,14 +724,14 @@ mod tests {
         };
 
         let test_fut = async {
-            for turn in 0..=2 {
-                let suggestion = &suggestions[turn];
+            for turn in 0..expected.suggestions.len() {
+                let suggestion = &expected.suggestions[turn];
                 let (_, _) = match recv_event(&mut cli).await {
                     GameEvent::Turn(id, size) => {
                         assert_eq!(size, suggestion.team.len());
                         (id, size)
                     }
-                    _ => panic!("Unexpected event")
+                    event => panic!("Unexpected event: {:?}", event)
                 };
 
                 cli.suggest_team(suggestion.from, &suggestion.team).await.unwrap();
@@ -766,49 +739,54 @@ mod tests {
                 match recv_event(&mut cli).await {
                     GameEvent::TeamSuggested(suggested) =>
                         assert_eq!(&suggested, &suggestion.team),
-                    _ => panic!("Unexpected event")
+                    event => panic!("Unexpected event: {:?}", event)
                 };
 
-                send_team_votes(&mut cli, &team_votes[turn]).await.unwrap();
+                send_team_votes(&mut cli, &expected.team_votes[turn]).await.unwrap();
 
                 match recv_event(&mut cli).await {
                     GameEvent::TeamVote(votes) =>
-                        assert_eq!(team_votes[turn], votes),
-                    _ => panic!("Unexpected event")
+                        assert_eq!(expected.team_votes[turn], votes),
+                    event => panic!("Unexpected event: {:?}", event)
                 };
 
                 match recv_event(&mut cli).await {
                     GameEvent::TeamApproved =>
-                        assert_eq!(team_approves[turn], TeamVote::Approve),
+                        assert_eq!(expected.team_approves[turn], TeamVote::Approve),
                     GameEvent::TeamRejected(try_cnt) => {
-                        assert_eq!(team_approves[turn], TeamVote::Reject);
-                        assert_eq!(try_cnt, try_counts[turn]);
+                        assert_eq!(expected.team_approves[turn], TeamVote::Reject);
+                        assert_eq!(try_cnt, expected.try_counts[turn]);
+                        if try_cnt == MAX_TRY_COUNT {
+                            break;
+                        } else {
+                            continue;
+                        }
                     }
-                    _ => panic!("Unexpected event")
+                    event => panic!("Unexpected event: {:?}", event)
                 };
 
-                for (id, vote) in mission_votes[turn].iter() {
+                for (id, vote) in expected.mission_votes[turn].iter() {
                     cli.submit_for_mission(*id, vote.clone()).await.unwrap();
                 }
 
                 match recv_event(&mut cli).await {
                     GameEvent::MissionResult(actual) => {
-                        let expected = mission_votes[turn].iter()
+                        let expected = expected.mission_votes[turn].iter()
                             .map(|(_, vote)| vote.clone())
                             .collect::<Vec<_>>();
                         assert!(mission_result_are_equal(&actual, &expected));
                     }
-                    _ => panic!("Unexpected event")
+                    event => panic!("Unexpected event: {:?}", event)
                 };
 
                 // Mermaid check is applied only after 2nd mission
                 if turn >= 1 {
-                    let mermaid = &mermaid_checks[turn - 1];
+                    let mermaid = &expected.mermaid_checks[turn - 1];
                     match recv_event(&mut cli).await {
                         GameEvent::Mermaid(mermaid_id) => {
                             assert_eq!(mermaid_id, mermaid.holder);
                         }
-                        _ => panic!("Unexpected event")
+                        event => panic!("Unexpected event: {:?}", event)
                     };
 
                     cli.send_mermaid_selection(mermaid.selection).await.unwrap();
@@ -816,8 +794,8 @@ mod tests {
                     match recv_event(&mut cli).await {
                         GameEvent::MermaidResult(result) => {
                             assert_eq!(result, mermaid.check_result);
-                        }
-                        _ => panic!("Unexpected event")
+                        },
+                        event => panic!("Unexpected event: {:?}", event)
                     };
 
                     cli.send_mermaid_word(mermaid.word.clone()).await.unwrap();
@@ -825,27 +803,27 @@ mod tests {
                     match recv_event(&mut cli).await {
                         GameEvent::MermaidSays(word) => {
                             assert_eq!(word, mermaid.word);
-                        }
-                        _ => panic!("Unexpected event")
+                        },
+                        event => panic!("Unexpected event: {:?}", event)
                     };
                 }
             }
 
-            if let Some(merlin_check) = merlin_check {
+            if let Some(merlin_check) = expected.merlin_check {
                 cli.send_merlin_check(merlin_check).await.unwrap();
                 match recv_event(&mut cli).await {
                     GameEvent::Merlin(id) => {
-                        assert_eq!(id, find_merlin(&players));
+                        assert_eq!(id, find_merlin(&expected.players));
                     }
-                    _ => panic!("Unexpected event")
+                    event => panic!("Unexpected event: {:?}", event)
                 };
             }
 
             match recv_event(&mut cli).await {
                 GameEvent::GameResult(result) => {
-                    assert_eq!(result, expected_game_result);
+                    assert_eq!(result, expected.expected_game_result);
                 }
-                _ => panic!("Unexpected event")
+                event => panic!("Unexpected event: {:?}", event)
             };
 
             // There should be end of the game with GoodWins result
@@ -853,6 +831,118 @@ mod tests {
         };
 
         tokio::join!(game_fut, test_fut);
+    }
+
+
+    #[tokio::test]
+    async fn test_clear_good_game_merlin_is_not_guessed() {
+        let expected = ExpectedGame {
+            num: 7,
+            players: default_team(7),
+            start_crown_id: 0,
+            suggestions: vec![
+                TeamSuggestion{ from: 0, team: vec![0, 1] },
+                TeamSuggestion{ from: 1, team: vec![0, 1, 2] },
+                TeamSuggestion{ from: 2, team: vec![0, 1, 2] },
+            ],
+            team_votes: vec![
+                vec![TeamVote::Approve; 7],
+                vec![TeamVote::Approve; 7],
+                vec![TeamVote::Approve; 7],
+            ],
+            team_approves: vec![TeamVote::Approve; 3],
+            try_counts: vec![1; 3],
+            mission_votes: vec![
+                vec![(0, MissionVote::Success), (1, MissionVote::Success)],
+                vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
+                vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
+            ],
+            mermaid_checks: vec![MermaidCheck {
+                holder: 5,
+                selection: 0,
+                check_result: Team::Good,
+                word: Team::Good,
+            }, MermaidCheck {
+                holder: 0,
+                selection: 1,
+                check_result: Team::Good,
+                word: Team::Good,
+            }],
+            merlin_check: Some(1),
+            expected_game_result: GameResult::GoodWins,
+        };
+
+        run_test_game(expected).await;
+    }
+
+    #[tokio::test]
+    async fn test_clear_good_game_but_merlin_is_guessed() {
+        let expected = ExpectedGame {
+            num: 7,
+            players: default_team(7),
+            start_crown_id: 0,
+            suggestions: vec![
+                TeamSuggestion{ from: 0, team: vec![0, 1] },
+                TeamSuggestion{ from: 1, team: vec![0, 1, 2] },
+                TeamSuggestion{ from: 2, team: vec![0, 1, 2] },
+            ],
+            team_votes: vec![
+                vec![TeamVote::Approve; 7],
+                vec![TeamVote::Approve; 7],
+                vec![TeamVote::Approve; 7],
+            ],
+            team_approves: vec![TeamVote::Approve; 3],
+            try_counts: vec![1; 3],
+            mission_votes: vec![
+                vec![(0, MissionVote::Success), (1, MissionVote::Success)],
+                vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
+                vec![(0, MissionVote::Success), (1, MissionVote::Success), (2, MissionVote::Success)],
+            ],
+            mermaid_checks: vec![MermaidCheck {
+                holder: 5,
+                selection: 0,
+                check_result: Team::Good,
+                word: Team::Good,
+            }, MermaidCheck {
+                holder: 0,
+                selection: 1,
+                check_result: Team::Good,
+                word: Team::Good,
+            }],
+            merlin_check: Some(0), // 0 is Merlin
+            expected_game_result: GameResult::BadWins, // Merlin is guessed
+        };
+
+        run_test_game(expected).await;
+    }
+
+    #[tokio::test]
+    async fn test_bad_wins_due_to_many_rejects() {
+        let expected = ExpectedGame {
+            num: 7,
+            players: default_team(7),
+            start_crown_id: 0,
+            suggestions: vec![
+                TeamSuggestion{ from: 0, team: vec![0, 1] },
+                TeamSuggestion{ from: 1, team: vec![0, 1] },
+                TeamSuggestion{ from: 2, team: vec![0, 1] },
+                TeamSuggestion{ from: 3, team: vec![0, 1] },
+            ],
+            team_votes: vec![
+                vec![TeamVote::Reject; 7],
+                vec![TeamVote::Reject; 7],
+                vec![TeamVote::Reject; 7],
+                vec![TeamVote::Reject; 7],
+            ],
+            team_approves: vec![TeamVote::Reject; 4],
+            try_counts: vec![2, 3, 4, 5],
+            mission_votes: vec![], // No missions
+            mermaid_checks: vec![], // No mermaid checks
+            merlin_check: None, // No merlin check
+            expected_game_result: GameResult::BadWins,
+        };
+
+        run_test_game(expected).await;
     }
 
     #[test]
