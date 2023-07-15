@@ -700,8 +700,6 @@ mod tests {
         // To make tests easier we will specify roles instead of IDs
         suggestion: Vec<Role>,
         team_votes: Vec<TeamVote>,
-        // Conclusion of team_votes
-        team_approve: TeamVote,
         try_count: u8,
         mission_votes: Vec<MissionVote>,
         mermaid_check: Option<MermaidCheck>,
@@ -783,9 +781,9 @@ mod tests {
 
                 match recv_event(&mut cli).await {
                     GameEvent::TeamApproved =>
-                        assert_eq!(exp_turn.team_approve, TeamVote::Approve),
+                        assert!(is_mission_approved(&expected_votes)),
                     GameEvent::TeamRejected(try_cnt) => {
-                        assert_eq!(exp_turn.team_approve, TeamVote::Reject);
+                        assert!(!is_mission_approved(&expected_votes));
                         assert_eq!(try_cnt, exp_turn.try_count);
                         if try_cnt == MAX_TRY_COUNT {
                             break;
@@ -873,14 +871,12 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
                     mermaid_check: None,
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
@@ -892,7 +888,6 @@ mod tests {
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
@@ -920,14 +915,12 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
                     mermaid_check: None,
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
@@ -939,7 +932,6 @@ mod tests {
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
@@ -967,28 +959,24 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Reject; 7],
-                    team_approve: TeamVote::Reject,
                     try_count: 2,
                     mission_votes: vec![],
                     mermaid_check: None,
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Reject; 7],
-                    team_approve: TeamVote::Reject,
                     try_count: 3,
                     mission_votes: vec![],
                     mermaid_check: None,
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Reject; 7],
-                    team_approve: TeamVote::Reject,
                     try_count: 4,
                     mission_votes: vec![],
                     mermaid_check: None,
                 }, GameTurn {
                     suggestion: vec![Role::Merlin, Role::Good],
                     team_votes: vec![TeamVote::Reject; 7],
-                    team_approve: TeamVote::Reject,
                     try_count: 5,
                     mission_votes: vec![],
                     mermaid_check: None,
@@ -1012,7 +1000,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Good, Role::Good],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success],
                     mermaid_check: None,
@@ -1021,7 +1008,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Good, Role::Good, Role::Mordred],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
@@ -1035,7 +1021,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Good, Role::Good, Role::Mordred],
                     team_votes: vec![TeamVote::Reject; 7],
-                    team_approve: TeamVote::Reject,
                     try_count: 2,
                     mission_votes: vec![],
                     mermaid_check: None,
@@ -1044,7 +1029,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Good, Role::Merlin, Role::Mordred],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Fail],
                     mermaid_check: Some(MermaidCheck {
@@ -1058,7 +1042,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Good, Role::Merlin, Role::Mordred, Role::Morgen],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Fail, MissionVote::Fail],
                     mermaid_check: Some(MermaidCheck {
@@ -1072,7 +1055,6 @@ mod tests {
                 GameTurn {
                     suggestion: vec![Role::Percival, Role::Merlin, Role::Mordred, Role::Morgen],
                     team_votes: vec![TeamVote::Approve; 7],
-                    team_approve: TeamVote::Approve,
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Fail, MissionVote::Fail],
                     mermaid_check: None, // Last turn, no mermaid check
