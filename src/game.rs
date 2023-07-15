@@ -402,8 +402,10 @@ impl Game {
     }
 
     async fn get_mermaid_check(&mut self) -> Result<ID, Box<dyn Error>> {
-        let info = self.info.lock().await;
-        self.tx_event.send(GameEvent::Mermaid(info.mermaid_id))?;
+        {
+            let info = self.info.lock().await;
+            self.tx_event.send(GameEvent::Mermaid(info.mermaid_id))?;
+        }
         let selection = self.rx_mermaid_selection.recv().await
             .ok_or("Channel closed")?;
         Ok(selection)
@@ -485,17 +487,10 @@ impl Game {
     async fn get_player_team(&self, id: ID) -> Team {
         let info = self.info.lock().await;
         let role = info.players[id as usize].clone();
-        match role {
-            Role::Mordred |
-            Role::Morgen |
-            Role::Oberon |
-            Role::Assassin |
-            Role::Bad => Team::Bad,
-
-            Role::Merlin |
-            Role::Percival |
-            Role::Good |
-            Role::Good2 => Team::Good,
+        if role.is_good() {
+            Team::Good
+        } else {
+            Team::Bad
         }
     }
 
@@ -605,6 +600,7 @@ impl Game {
 
             println!("Mission idx: {}", mission_idx);
             if mission_idx > 1 && mission_idx < 5 {
+                println!("Waiting for mermaid selection");
                 let mermaid_check = self.get_mermaid_check().await?;
                 let mermaid_result = self.get_player_team(mermaid_check).await;
                 println!("Mermaid sees that {} is {:?}", mermaid_check, mermaid_result);
@@ -716,11 +712,10 @@ mod tests {
         return a_success_cnt == b_success_cnt;
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct MermaidCheck {
-        holder: ID,
-        selection: ID,
-        check_result: Team,
+        holder: Role,
+        selection: Role,
         word: Team,
     }
 
@@ -757,6 +752,11 @@ mod tests {
         }
 
         team
+    }
+
+    async fn cli_find_role(cli: &GameClient, role: Role) -> ID {
+        let info = cli.info.lock().await;
+        find_role(&info.players, role)
     }
 
     async fn run_test_game(expected: ExpectedGame) {
@@ -835,18 +835,26 @@ mod tests {
                 };
 
                 if let Some(mermaid) = &exp_turn.mermaid_check {
+                    println!("[TEST] mermaid: {:?}", mermaid);
                     match recv_event(&mut cli).await {
                         GameEvent::Mermaid(mermaid_id) => {
-                            assert_eq!(mermaid_id, mermaid.holder);
+                            let holder_id = cli_find_role(&mut cli, mermaid.holder.clone()).await;
+                            assert_eq!(mermaid_id, holder_id);
                         }
                         event => panic!("Unexpected event: {:?}", event)
                     };
 
-                    cli.send_mermaid_selection(mermaid.selection).await.unwrap();
+                    let selection_id = cli_find_role(&mut cli, mermaid.selection.clone()).await;
+                    cli.send_mermaid_selection(selection_id).await.unwrap();
 
                     match recv_event(&mut cli).await {
                         GameEvent::MermaidResult(result) => {
-                            assert_eq!(result, mermaid.check_result);
+                            let expected = if mermaid.selection.is_good() {
+                                Team::Good
+                            } else {
+                                Team::Bad
+                            };
+                            assert_eq!(result, expected);
                         },
                         event => panic!("Unexpected event: {:?}", event)
                     };
@@ -906,9 +914,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 6,
-                        selection: 0,
-                        check_result: Team::Good,
+                        holder: Role::Oberon,
+                        selection: Role::Good,
                         word: Team::Good,
                     }),
                 }, GameTurn {
@@ -917,9 +924,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 0,
-                        selection: 1,
-                        check_result: Team::Good,
+                        holder: Role::Good,
+                        selection: Role::Good2,
                         word: Team::Good,
                     }),
                 }
@@ -950,9 +956,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 6,
-                        selection: 0,
-                        check_result: Team::Good,
+                        holder: Role::Oberon,
+                        selection: Role::Good,
                         word: Team::Good,
                     }),
                 }, GameTurn {
@@ -961,9 +966,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 0,
-                        selection: 1,
-                        check_result: Team::Good,
+                        holder: Role::Good,
+                        selection: Role::Merlin,
                         word: Team::Good,
                     }),
                 }
@@ -1037,9 +1041,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 6,
-                        selection: 4,
-                        check_result: Team::Bad,
+                        holder: Role::Oberon,
+                        selection: Role::Mordred,
                         word: Team::Good,
                     }),
                 },
@@ -1058,9 +1061,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Fail],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 4,
-                        selection: 0,
-                        check_result: Team::Good,
+                        holder: Role::Mordred,
+                        selection: Role::Merlin,
                         word: Team::Bad,
                     }),
                 },
@@ -1071,9 +1073,8 @@ mod tests {
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Fail, MissionVote::Fail],
                     mermaid_check: Some(MermaidCheck {
-                        holder: 0,
-                        selection: 2,
-                        check_result: Team::Good,
+                        holder: Role::Merlin,
+                        selection: Role::Good,
                         word: Team::Good,
                     }),
                 },
