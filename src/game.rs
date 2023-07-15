@@ -122,8 +122,6 @@ pub struct GameClient {
 
     votes: Vec<Option<TeamVote>>,
     mission_votes: Vec<MissionVote>,
-    // TODO: Remove
-    suggested_team: Vec<ID>,
 
     info: Arc<Mutex<GameInfo>>,
 }
@@ -160,7 +158,6 @@ impl GameClient {
             }
         }
 
-        self.suggested_team = suggested_team.clone();
         self.tx_team.send(suggested_team.clone())?;
         Ok(())
     }
@@ -183,12 +180,12 @@ impl GameClient {
     }
 
     pub async fn submit_for_mission(&mut self, from: ID, vote: MissionVote) -> Result<(), Box<dyn Error>> {
-        if !self.suggested_team.contains(&from) {
-            return Err("Vote can only be sent by current team player".into())
-        }
-
         let enough_votes = {
             let info = self.info.lock().await;
+
+            if !info.current_team.contains(&from) {
+                return Err("Vote can only be sent by current team player".into())
+            }
 
             if info.players[from as usize].is_good() && vote == MissionVote::Fail {
                 return Err("Good player could vote only with Success".into())
@@ -385,7 +382,6 @@ impl Game {
 
             mission_votes: Vec::new(),
             votes: Vec::new(),
-            suggested_team: Vec::new(),
 
             info: info.clone(),
         };
