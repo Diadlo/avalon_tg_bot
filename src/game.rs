@@ -638,11 +638,7 @@ impl Game {
 mod tests {
     use std::error::Error;
 
-    use crate::game::{get_expected_team_size, ID, GameEvent, default_team, find_role, MAX_TRY_COUNT, is_mission_approved};
-
-    use super::{Game, TeamVote, MissionVote, calc_winner, GameResult, Team, Role};
-
-    use super::{GameClient, calc_mermaid_id};
+    use super::*;
 
     fn calc_winner_test(votes: Vec<u32>, expected: Option<GameResult>) {
         let votes: Vec<MissionVote> = votes.into_iter()
