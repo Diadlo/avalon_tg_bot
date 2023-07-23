@@ -114,7 +114,7 @@ pub enum GameResult {
     BadWins
 }
 
-const MAX_TRY_COUNT: u8 = 5;
+pub const MAX_TRY_COUNT: u8 = 5;
 
 pub struct GameInfo {
     players: Vec<Role>,
@@ -240,23 +240,23 @@ impl GameClient {
         Ok(())
     }
 
-    async fn recv_event(&mut self) -> Result<GameEvent, Box<dyn Error>> {
+    pub async fn recv_event(&mut self) -> Result<GameEvent, Box<dyn Error>> {
         let event = self.rx_event.recv().await
             .ok_or("Channel closed")?;
         Ok(event)
     }
 
-    async fn send_mermaid_selection(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
+    pub async fn send_mermaid_selection(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
         self.tx_mermaid_selection.send(id)?;
         Ok(())
     }
 
-    async fn send_mermaid_word(&mut self, word: Team) -> Result<(), Box<dyn Error>> {
+    pub async fn send_mermaid_word(&mut self, word: Team) -> Result<(), Box<dyn Error>> {
         self.tx_mermaid_word.send(word)?;
         Ok(())
     }
 
-    async fn send_merlin_check(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
+    pub async fn send_merlin_check(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
         self.tx_merlin.send(id)?;
         Ok(())
     }
