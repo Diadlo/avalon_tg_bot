@@ -1,3 +1,4 @@
+use std::fmt;
 use std::{error::Error, sync::Arc};
 use std::vec::Vec;
 use rand::Rng;
@@ -34,6 +35,12 @@ pub enum Team {
     Bad
 }
 
+impl fmt::Display for Team {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum Role {
     Mordred,
@@ -47,6 +54,15 @@ pub enum Role {
     Good,
     // The same as Good, but added to simplify code because now team contains only unique roles
     Good2,
+}
+
+impl fmt::Display for Role {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Role::Good2 => write!(f, "Good"),
+            _ => write!(f, "{:?}", self)
+        }
+    }
 }
 
 impl Role {
@@ -74,10 +90,22 @@ pub enum TeamVote {
     Reject
 }
 
+impl fmt::Display for TeamVote {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum MissionVote {
     Success,
     Fail
+}
+
+impl fmt::Display for MissionVote {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(PartialEq, Clone, Debug)]
