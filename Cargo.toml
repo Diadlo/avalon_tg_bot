@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 futures = "0.3"
 rand = "0.8"
+teloxide = { version = "0.12", features = ["macros"] }
 tokio = { version = "1.29", features = ["sync", "rt", "rt-multi-thread", "macros"] }
