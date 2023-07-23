@@ -133,12 +133,14 @@ pub enum GameEvent {
     Turn(ID, usize), // Crown ID, team size for the mission
     TeamSuggested(Vec<ID>),
     TeamVote(Vec<TeamVote>),
-    TeamApproved,
+    TeamApproved(Vec<ID>), // Approved team
     TeamRejected(u8), // Try count
     MissionResult(Vec<MissionVote>),
     Mermaid(ID), // Mermaid ID
-    MermaidResult(Team), // Role of the checked player
-    MermaidSays(Team), // Mermaid says who is player
+    MermaidResult(ID, Team), // Role of the checked player
+    MermaidSays(ID, Team), // Mermaid says who is player with ID
+    BadLastChance(Vec<ID>, ID), // Bad team looses main part and tries to guess Merlin
+                                      // Parameters are bad team and the person who should guess Merlin
     Merlin(ID), // Actual merlin ID
     GameResult(GameResult),
 }
@@ -182,6 +184,21 @@ pub struct Game {
 }
 
 impl GameClient {
+    pub async fn get_player_roles(&self) -> Vec<Role> {
+        let info = self.info.lock().await;
+        info.players.clone()
+    }
+
+    pub async fn get_crown_id(&self) -> ID {
+        let info = self.info.lock().await;
+        info.crown_id
+    }
+
+    pub async fn get_mermaid_id(&self) -> ID {
+        let info = self.info.lock().await;
+        info.mermaid_id
+    }
+
     pub async fn suggest_team(&mut self, from: ID, suggested_team: &Vec<ID>) -> Result<(), Box<dyn Error>> {
         {
             let info = self.info.lock().await;
@@ -356,13 +373,17 @@ fn default_team(players: usize) -> Vec<Role> {
     }
 }
 
-fn find_role(players: &[Role], search_for: Role) -> ID {
+fn find_role_safe(players: &[Role], search_for: Role) -> Option<ID> {
     for (id, role) in players.iter().enumerate() {
         if *role == search_for {
-            return id as ID
+            return Some(id as ID)
         }
     }
-    panic!("Merlin not found");
+    None
+}
+
+fn find_role(players: &[Role], search_for: Role) -> ID {
+    find_role_safe(players, search_for).expect("Role not found")
 }
 
 impl Game {
@@ -527,13 +548,18 @@ impl Game {
         find_role(&info.players, Role::Merlin)
     }
 
-    async fn send_mermaid_result(&mut self, team: Team) -> Result<(), Box<dyn Error>> {
-        self.tx_event.send(GameEvent::MermaidResult(team))?;
+    async fn send_mermaid_result(&mut self, user: ID, team: Team) -> Result<(), Box<dyn Error>> {
+        self.tx_event.send(GameEvent::MermaidResult(user, team))?;
         Ok(())
     }
 
-    async fn send_mermaid_word(&mut self, word: Team) -> Result<(), Box<dyn Error>> {
-        self.tx_event.send(GameEvent::MermaidSays(word))?;
+    async fn send_mermaid_word(&mut self, user: ID, word: Team) -> Result<(), Box<dyn Error>> {
+        self.tx_event.send(GameEvent::MermaidSays(user, word))?;
+        Ok(())
+    }
+
+    async fn send_bad_last_chance(&mut self, bad_team: Vec<ID>, guesser: ID) -> Result<(), Box<dyn Error>> {
+        self.tx_event.send(GameEvent::BadLastChance(bad_team, guesser))?;
         Ok(())
     }
 
@@ -571,6 +597,26 @@ impl Game {
         Ok(())
     }
 
+    async fn get_bad_team(&self) -> Vec<ID> {
+        let info = self.info.lock().await;
+        info.players.iter()
+            .enumerate()
+            .filter(|(_, x)| !x.is_good())
+            .map(|(id, _)| id as ID)
+            .collect()
+    }
+
+    async fn get_guesser(&self) -> ID {
+        // If there is Assassin, he should guess Merlin
+        // Otherwise it should be Mordred
+        let info = self.info.lock().await;
+        if let Some(assassin_id) = find_role_safe(&info.players, Role::Assassin) {
+            assassin_id
+        } else {
+            find_role(&info.players, Role::Mordred)
+        }
+    }
+
     pub async fn start(&mut self) -> Result<(), Box<dyn Error>> {
         let current_mission = self.get_current_mission().await;
         let number_of_players = self.get_number_of_players().await;
@@ -594,7 +640,7 @@ impl Game {
 
                 if is_mission_approved(&team_votes) {
                     println!("Mission approved");
-                    self.send_team_vote_result(GameEvent::TeamApproved).await?;
+                    self.send_team_vote_result(GameEvent::TeamApproved(team)).await?;
                     break;
                 }
 
@@ -632,10 +678,10 @@ impl Game {
                 let mermaid_check = self.get_mermaid_check().await?;
                 let mermaid_result = self.get_player_team(mermaid_check).await;
                 println!("Mermaid sees that {} is {:?}", mermaid_check, mermaid_result);
-                self.send_mermaid_result(mermaid_result).await?;
+                self.send_mermaid_result(mermaid_check, mermaid_result).await?;
                 let mermaid_word = self.get_mermaid_word().await?;
                 println!("Mermaid says that player is {:?}", mermaid_word);
-                self.send_mermaid_word(mermaid_word).await?;
+                self.send_mermaid_word(mermaid_check, mermaid_word).await?;
                 self.move_mermaid(mermaid_check).await?;
             }
         }
@@ -645,6 +691,10 @@ impl Game {
             self.send_game_result(winner.clone()).await?;
             return Ok(());
         }
+
+        let bad_team = self.get_bad_team().await;
+        let guesser = self.get_guesser().await;
+        self.send_bad_last_chance(bad_team, guesser).await?;
 
         // If good wins, bad have a chance to win by guessing Merlin
         let merlin_check = self.get_merlin_check().await?;
@@ -830,8 +880,10 @@ mod tests {
                 };
 
                 match recv_event(&mut cli).await {
-                    GameEvent::TeamApproved =>
-                        assert!(is_mission_approved(&expected_votes)),
+                    GameEvent::TeamApproved(team) => {
+                        assert!(is_mission_approved(&expected_votes));
+                        assert_eq!(team, suggested_team);
+                    }
                     GameEvent::TeamRejected(try_cnt) => {
                         assert!(!is_mission_approved(&expected_votes));
                         assert_eq!(try_cnt, exp_turn.try_count);
@@ -886,7 +938,8 @@ mod tests {
                     cli.send_mermaid_word(mermaid.word.clone()).await.unwrap();
 
                     match recv_event(&mut cli).await {
-                        GameEvent::MermaidSays(word) => {
+                        GameEvent::MermaidSays(user_id, word) => {
+                            assert_eq!(user_id, selection_id);
                             assert_eq!(word, mermaid.word);
                         },
                         event => panic!("Unexpected event: {:?}", event)
@@ -895,6 +948,13 @@ mod tests {
             }
 
             if let Some(merlin_check) = expected.merlin_check {
+                match recv_event(&mut cli).await {
+                    GameEvent::BadLastChance(_, _) => {
+                        // Here we should check bad team and guesser ID, but I'm too lazy :)
+                    }
+                    event => panic!("Unexpected event: {:?}", event)
+                };
+
                 cli.send_merlin_check(merlin_check).await.unwrap();
                 match recv_event(&mut cli).await {
                     GameEvent::Merlin(id) => {
