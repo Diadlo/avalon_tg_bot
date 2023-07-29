@@ -82,7 +82,7 @@ impl Role {
     }
 }
 
-type ID=u8;
+pub type ID=u8;
 
 #[derive(PartialEq, Clone, Debug)]
 pub enum TeamVote {
@@ -310,7 +310,7 @@ fn get_expected_team_size(mission: usize,
         [2, 3, 3, 3, 4, 4, 5, 5, 5],
     ];
 
-    return Some(TEAM_SIZE_TABLE[mission][players - 1]);
+    return Some(TEAM_SIZE_TABLE[mission][players - 2]);
 }
 
 fn calc_mission_result(mission: usize,
@@ -391,6 +391,18 @@ fn find_role(players: &[Role], search_for: Role) -> ID {
     find_role_safe(players, search_for).expect("Role not found")
 }
 
+fn calc_prev_id(id: ID, players: usize) -> ID {
+    assert!(id < players as ID);
+    let prev_id = id as i32 - 1;
+    prev_id.rem_euclid(players as i32) as ID
+}
+
+fn calc_next_id(id: ID, players: usize) -> ID {
+    assert!(id < players as ID);
+    let prev_id = id as i32 + 1;
+    prev_id.rem_euclid(players as i32) as ID
+}
+
 impl Game {
     pub fn setup(number: usize) -> (Game, GameClient) {
         let (tx_mermaid_selection, rx_mermaid_selection) = mpsc::unbounded_channel();
@@ -412,10 +424,10 @@ impl Game {
 
             expected_team_size: 0,
             crown_id,
-            // Actually this should be crown_id - 1, but in main loop we do "next_turn"
-            // in the beginning, so it will be incremented
-            mermaid_id: crown_id,
+            mermaid_id: calc_prev_id(crown_id, number),
         };
+
+        println!("Game init crown_id={} mermaid_id={}", raw_info.crown_id, raw_info.mermaid_id);
 
         raw_info.players.shuffle(&mut rng);
 
@@ -472,14 +484,15 @@ impl Game {
     }
 
     async fn next_turn(&mut self) -> Result<(), Box<dyn Error>> {
-        {
-            let mut info = self.info.lock().await;
-            let num = info.players.len();
-            info.crown_id = (info.crown_id + 1) % num as ID;
-        }
         self.update_expected_team_size().await?;
         self.send_turn_event().await?;
         Ok(())
+    }
+
+    async fn shift_crown(&mut self) {
+        let mut info = self.info.lock().await;
+        let num = info.players.len();
+        info.crown_id = calc_next_id(info.crown_id, num);
     }
 
     async fn get_suggested_team(&mut self) -> Vec<ID> {
@@ -487,7 +500,6 @@ impl Game {
     }
 
     async fn get_team_votes(&mut self) -> Vec<TeamVote> {
-        println!("get_team_votes");
         self.rx_vote.recv().await.unwrap()
     }
 
@@ -647,6 +659,7 @@ impl Game {
                 if is_mission_approved(&team_votes) {
                     println!("Mission approved");
                     self.send_team_vote_result(GameEvent::TeamApproved(team)).await?;
+                    self.shift_crown().await;
                     break;
                 }
 
@@ -657,6 +670,8 @@ impl Game {
                 if try_count >= MAX_TRY_COUNT {
                     break;
                 }
+
+               self.shift_crown().await;
             }
 
             if try_count == MAX_TRY_COUNT {
@@ -759,18 +774,11 @@ mod tests {
         calc_winner_test(vec![0, 1, 0, 1, 0], Some(GameResult::BadWins));
     }
 
-    fn calc_mermaid_id(crown_id: ID, players: usize) -> ID {
-        assert!(crown_id < players as ID);
-        let prev_id = crown_id as i32 - 1;
-        let mermaid_id = prev_id.rem_euclid(players as i32) as ID;
-        mermaid_id
-    }
-
     #[test]
     fn test_mermaid_id_overflow() {
-        assert_eq!(calc_mermaid_id(2, 3), 1);
-        assert_eq!(calc_mermaid_id(1, 3), 0);
-        assert_eq!(calc_mermaid_id(0, 3), 2);
+        assert_eq!(calc_prev_id(2, 3), 1);
+        assert_eq!(calc_prev_id(1, 3), 0);
+        assert_eq!(calc_prev_id(0, 3), 2);
     }
 
     #[test]
@@ -853,8 +861,8 @@ mod tests {
         // During real game players and crown are assigned randomly.
         // But for testing purposes we will assign them manually.
         g.info.lock().await.players = expected.players.clone();
-        g.info.lock().await.crown_id = calc_mermaid_id(expected.start_crown_id, expected.num);
-        g.info.lock().await.mermaid_id = calc_mermaid_id(expected.start_crown_id, expected.num);
+        g.info.lock().await.crown_id = expected.start_crown_id;
+        g.info.lock().await.mermaid_id = calc_prev_id(expected.start_crown_id, expected.num);
 
         let game_fut = async {
             g.start().await.unwrap();

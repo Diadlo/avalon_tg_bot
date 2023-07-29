@@ -4,22 +4,26 @@ use teloxide::types::ChatId;
 
 use crate::{game::{GameEvent, TeamVote, self, MissionVote, Team, GameResult}, GameInfo};
 
+#[derive(PartialEq, Debug)]
 pub enum Dst {
     All,
     User(ChatId)
 }
 
+#[derive(Debug)]
 pub struct Notification {
     pub dst: Dst,
     pub message: String,
 }
 
+#[derive(Debug)]
 pub struct ControlMessage {
     pub dst: Dst,
     pub message: String,
     pub commands: Vec<String>,
 }
 
+#[derive(Debug)]
 pub enum GameMessage {
     Notification(Notification),
     ControlMessage(ControlMessage),
@@ -27,7 +31,7 @@ pub enum GameMessage {
 
 struct SuggestionUser {
     id: u8,
-    name: &str,
+    name: String,
     selected: bool,
 }
 
@@ -39,19 +43,25 @@ impl GameMessage {
         })
     }
 
-    fn turn_ctrl(crown_id: ChatId, team_size: usize, users: &[SuggestionUser]) -> Self {
-        let users = users.iter()
+    fn turn_ctrl_raw(crown_id: ChatId, team_size: usize, users: &[SuggestionUser]) -> ControlMessage {
+        let mut users = users.iter()
             .map(|user| {
                 let icon = if user.selected { "☑️ " } else { "" };
                 format!("suggest_{} {}{}", user.id, icon, user.name)
             })
             .collect::<Vec<_>>();
 
-        Self::ControlMessage(ControlMessage {
+        users.push("suggest_finish".to_string());
+
+        ControlMessage {
             dst: Dst::User(crown_id),
             message: format!("You chooses a team of {} people", team_size),
             commands: users,
-        })
+        }
+    }
+
+    fn turn_ctrl(crown_id: ChatId, team_size: usize, users: &[SuggestionUser]) -> Self {
+        Self::ControlMessage(Self::turn_ctrl_raw(crown_id, team_size, users))
     }
 
     fn suggested_team(team_names: &[&str]) -> Self {
@@ -238,6 +248,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
 {
     match event {
         GameEvent::Turn(crown_id, team_size) => {
+            println!("Turn: crown_id={} team_size={}", crown_id, team_size);
             let crown_chat_id = get_user_chat_id(info, crown_id);
             let crown_name = get_user_name(info, crown_id);
             let player_num = info.players.len() as u8;
@@ -246,7 +257,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
                 .map(|id| {
                     SuggestionUser {
                         id,
-                        name: get_user_name(info, id),
+                        name: get_user_name(info, id).to_string(),
                         selected: false,
                     }
                 })
@@ -356,22 +367,19 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
     }
 }
 
-pub async fn suggestion_state(info: &GameInfo, team: &[u8]) -> Result<Vec<GameMessage>, Box<dyn Error>> {
+pub fn suggestion_state(info: &GameInfo, crown_id: u8, team_size: usize, selected_team: &[u8]) -> ControlMessage {
     let crown_chat_id = get_user_chat_id(info, crown_id);
-    let crown_name = get_user_name(info, crown_id);
     let player_num = info.players.len() as u8;
 
     let users = (0..player_num)
         .map(|id| {
             SuggestionUser {
                 id,
-                name: get_user_name(info, id),
-                selected: team.contains(&id),
+                name: get_user_name(info, id).to_string(),
+                selected: selected_team.contains(&id),
             }
         })
         .collect::<Vec<_>>();
 
-    Ok(vec![
-        GameMessage::turn_ctrl(crown_chat_id, team_size, &users)
-    ])
+    GameMessage::turn_ctrl_raw(crown_chat_id, team_size, &users)
 }
