@@ -298,19 +298,19 @@ fn get_expected_team_size(mission: usize,
         return None
     }
 
-    if players < 5 || players > 10 {
+    if players < 1 || players > 10 {
         return None;
     }
 
-    static TEAM_SIZE_TABLE: &'static [[usize; 6]; 5] = &[
-        [2, 2, 2, 3, 3, 3],
-        [3, 3, 3, 4, 4, 4],
-        [2, 4, 3, 4, 4, 4],
-        [3, 3, 4, 5, 5, 5],
-        [3, 4, 4, 5, 5, 5],
+    static TEAM_SIZE_TABLE: &'static [[usize; 9]; 5] = &[
+        [1, 2, 2, 2, 2, 2, 3, 3, 3],
+        [2, 3, 3, 3, 3, 3, 4, 4, 4],
+        [1, 2, 2, 2, 4, 3, 4, 4, 4],
+        [2, 3, 3, 3, 3, 4, 5, 5, 5],
+        [2, 3, 3, 3, 4, 4, 5, 5, 5],
     ];
 
-    return Some(TEAM_SIZE_TABLE[mission][players - 5]);
+    return Some(TEAM_SIZE_TABLE[mission][players - 1]);
 }
 
 fn calc_mission_result(mission: usize,
@@ -348,15 +348,20 @@ fn calc_winner(mission_votes: &Vec<MissionVote>) -> Option<GameResult> {
     }
 }
 
-fn calc_mermaid_id(crown_id: ID, players: usize) -> ID {
-    assert!(crown_id < players as ID);
-    let prev_id = crown_id as i32 - 1;
-    let mermaid_id = prev_id.rem_euclid(players as i32) as ID;
-    mermaid_id
-}
-
 fn default_team(players: usize) -> Vec<Role> {
     match players {
+        2 => vec!(
+            Role::Merlin,
+            Role::Mordred,
+        ),
+        3 => vec!(
+            Role::Merlin, Role::Good,
+            Role::Mordred,
+        ),
+        4 => vec!(
+            Role::Merlin, Role::Good, Role::Good2,
+            Role::Mordred,
+        ),
         5 => vec!(
             Role::Merlin, Role::Good, Role::Good2,
             Role::Mordred, Role::Morgen,
@@ -674,6 +679,7 @@ impl Game {
             self.notify_mission_result(&mission_votes)?;
 
             println!("Mission idx: {}", mission_idx);
+            // TODO: Check size of team
             if mission_idx > 1 && mission_idx < 5 {
                 println!("Waiting for mermaid selection");
                 let mermaid_check = self.get_mermaid_check().await?;
@@ -751,6 +757,13 @@ mod tests {
         calc_winner_test(vec![1, 0, 0, 0], Some(GameResult::BadWins));
         calc_winner_test(vec![1, 0, 1, 0, 0], Some(GameResult::BadWins));
         calc_winner_test(vec![0, 1, 0, 1, 0], Some(GameResult::BadWins));
+    }
+
+    fn calc_mermaid_id(crown_id: ID, players: usize) -> ID {
+        assert!(crown_id < players as ID);
+        let prev_id = crown_id as i32 - 1;
+        let mermaid_id = prev_id.rem_euclid(players as i32) as ID;
+        mermaid_id
     }
 
     #[test]

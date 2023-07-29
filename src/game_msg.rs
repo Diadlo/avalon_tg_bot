@@ -25,11 +25,32 @@ pub enum GameMessage {
     ControlMessage(ControlMessage),
 }
 
+struct SuggestionUser {
+    id: u8,
+    name: &str,
+    selected: bool,
+}
+
 impl GameMessage {
     fn turn(crown_name: &str, team_size: usize) -> Self {
         Self::Notification(Notification {
             dst: Dst::All,
-            message: format!("{} proposes a team of {} people", crown_name, team_size),
+            message: format!("{} chooses a team of {} people", crown_name, team_size),
+        })
+    }
+
+    fn turn_ctrl(crown_id: ChatId, team_size: usize, users: &[SuggestionUser]) -> Self {
+        let users = users.iter()
+            .map(|user| {
+                let icon = if user.selected { "☑️ " } else { "" };
+                format!("suggest_{} {}{}", user.id, icon, user.name)
+            })
+            .collect::<Vec<_>>();
+
+        Self::ControlMessage(ControlMessage {
+            dst: Dst::User(crown_id),
+            message: format!("You chooses a team of {} people", team_size),
+            commands: users,
         })
     }
 
@@ -217,9 +238,24 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
 {
     match event {
         GameEvent::Turn(crown_id, team_size) => {
+            let crown_chat_id = get_user_chat_id(info, crown_id);
             let crown_name = get_user_name(info, crown_id);
+            let player_num = info.players.len() as u8;
 
-            Ok(vec![GameMessage::turn(crown_name, team_size)])
+            let users = (0..player_num)
+                .map(|id| {
+                    SuggestionUser {
+                        id,
+                        name: get_user_name(info, id),
+                        selected: false,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            Ok(vec![
+                GameMessage::turn(crown_name, team_size),
+                GameMessage::turn_ctrl(crown_chat_id, team_size, &users)
+            ])
         },
         GameEvent::TeamSuggested(team) => {
             let team_names = team.iter().map(|id| {
@@ -318,4 +354,24 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
             Ok(vec![GameMessage::game_result(result)])
         },
     }
+}
+
+pub async fn suggestion_state(info: &GameInfo, team: &[u8]) -> Result<Vec<GameMessage>, Box<dyn Error>> {
+    let crown_chat_id = get_user_chat_id(info, crown_id);
+    let crown_name = get_user_name(info, crown_id);
+    let player_num = info.players.len() as u8;
+
+    let users = (0..player_num)
+        .map(|id| {
+            SuggestionUser {
+                id,
+                name: get_user_name(info, id),
+                selected: team.contains(&id),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    Ok(vec![
+        GameMessage::turn_ctrl(crown_chat_id, team_size, &users)
+    ])
 }
