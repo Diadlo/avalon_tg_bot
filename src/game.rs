@@ -137,7 +137,7 @@ pub enum GameEvent {
     TeamRejected(u8), // Try count
     MissionResult(Vec<MissionVote>),
     Mermaid(ID), // Mermaid ID
-    MermaidResult(ID, Team), // Role of the checked player
+    MermaidResult(ID, ID, Team), // Mermaid ID, checked player ID, team
     MermaidSays(ID, Team), // Mermaid says who is player with ID
     BadLastChance(Vec<ID>, ID), // Bad team looses main part and tries to guess Merlin
                                       // Parameters are bad team and the person who should guess Merlin
@@ -548,8 +548,9 @@ impl Game {
         find_role(&info.players, Role::Merlin)
     }
 
-    async fn send_mermaid_result(&mut self, user: ID, team: Team) -> Result<(), Box<dyn Error>> {
-        self.tx_event.send(GameEvent::MermaidResult(user, team))?;
+    async fn send_mermaid_result(&mut self, checked_user: ID, team: Team) -> Result<(), Box<dyn Error>> {
+        let info = self.info.lock().await;
+        self.tx_event.send(GameEvent::MermaidResult(info.mermaid_id, checked_user, team))?;
         Ok(())
     }
 
@@ -912,9 +913,9 @@ mod tests {
 
                 if let Some(mermaid) = &exp_turn.mermaid_check {
                     println!("[TEST] mermaid: {:?}", mermaid);
+                    let holder_id = cli_find_role(&mut cli, mermaid.holder.clone()).await;
                     match recv_event(&mut cli).await {
                         GameEvent::Mermaid(mermaid_id) => {
-                            let holder_id = cli_find_role(&mut cli, mermaid.holder.clone()).await;
                             assert_eq!(mermaid_id, holder_id);
                         }
                         event => panic!("Unexpected event: {:?}", event)
@@ -924,7 +925,9 @@ mod tests {
                     cli.send_mermaid_selection(selection_id).await.unwrap();
 
                     match recv_event(&mut cli).await {
-                        GameEvent::MermaidResult(result) => {
+                        GameEvent::MermaidResult(mermaid_id, user_id, result) => {
+                            assert_eq!(mermaid_id, holder_id);
+                            assert_eq!(selection_id, user_id);
                             let expected = if mermaid.selection.is_good() {
                                 Team::Good
                             } else {
