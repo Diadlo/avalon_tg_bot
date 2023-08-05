@@ -36,10 +36,18 @@ struct SuggestionUser {
 }
 
 impl GameMessage {
-    fn turn(crown_name: &str, team_size: usize) -> Self {
+    fn turn(crown_name: &str, team_size: usize, results: Vec<MissionVote>) -> Self {
+        let mission_history = results.iter()
+            .map(|vote| {
+                if vote == &MissionVote::Success { "🏆" } else { "🗡️" }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let mission_chose = format!("{} chooses a team of {} people", crown_name, team_size),
         Self::Notification(Notification {
             dst: Dst::All,
-            message: format!("{} chooses a team of {} people", crown_name, team_size),
+            message: format!("{}\n{}", mission_history, mission_chose),
         })
     }
 
@@ -264,7 +272,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
                 .collect::<Vec<_>>();
 
             Ok(vec![
-                GameMessage::turn(crown_name, team_size),
+                GameMessage::turn(crown_name, team_size, &info.results),
                 GameMessage::turn_ctrl(crown_chat_id, team_size, &users)
             ])
         },
