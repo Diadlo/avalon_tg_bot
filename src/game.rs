@@ -201,7 +201,7 @@ impl GameClient {
         info.mermaid_id
     }
 
-    pub async fn suggest_team(&mut self, from: ID, suggested_team: &Vec<ID>) -> Result<(), Box<dyn Error>> {
+    pub async fn suggest_team(&mut self, from: ID, suggested_team: &Vec<ID>) -> Result<(), Box<dyn Error + Send + Sync>> {
         {
             let info = self.info.lock().await;
             if from != info.crown_id {
