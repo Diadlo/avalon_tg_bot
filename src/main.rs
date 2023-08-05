@@ -32,6 +32,7 @@ struct GameSession {
     leader: ChatId,
     info: Option<GameInfo>,
     suggestion: Option<SuggestionInfo>,
+    finished: bool,
 }
 
 // TODO: Move out to separate file
@@ -46,8 +47,8 @@ async fn get_game_session(ctx: &mut BotCtx, message: &Message) -> Option<Arc<Mut
     if let Some(game_id) = ctx.user_games.get(&message.chat.id) {
         if let Some(session) = ctx.game_sessions.get(game_id).cloned() {
             let session_id = session.lock().await.id;
-            // ID is set to zero when game is finished
-            if session_id == 0 {
+            let finished = session.lock().await.finished;
+            if finished {
                 drop(session);
                 ctx.game_sessions.remove(&session_id);
                 None
@@ -132,6 +133,7 @@ async fn handle_new_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<
             leader: message.chat.id,
             info: None,
             suggestion: None,
+            finished: false,
         };
 
         ctx.game_sessions.insert(session.id, Arc::new(Mutex::new(session)));
@@ -222,7 +224,7 @@ async fn process_game_event(session: &mut GameSession, event: &GameEvent, bot: &
     }
 
     if let GameEvent::GameResult(_) = event {
-        session.id = 0;
+        session.finished = true;
     }
 
     println!("<process_game_event");
