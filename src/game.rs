@@ -1,5 +1,6 @@
 use std::fmt;
 use std::{error::Error, sync::Arc};
+use std::ops::{Deref, DerefMut};
 use std::vec::Vec;
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -145,21 +146,22 @@ pub enum GameEvent {
     GameResult(GameResult),
 }
 
+#[derive(Clone)]
 pub struct GameClient {
-    rx_event:  mpsc::UnboundedReceiver<GameEvent>,
+    rx_event:  Arc<Mutex<mpsc::UnboundedReceiver<GameEvent>>>,
 
     // Mermaid owner selected player
-    tx_mermaid_selection: mpsc::UnboundedSender<ID>,
+    tx_mermaid_selection: Arc<Mutex<mpsc::UnboundedSender<ID>>>,
     // Mermaid says who is player
-    tx_mermaid_word: mpsc::UnboundedSender<Team>,
+    tx_mermaid_word: Arc<Mutex<mpsc::UnboundedSender<Team>>>,
 
-    tx_team:    mpsc::UnboundedSender<Vec<ID>>,
-    tx_vote:    mpsc::UnboundedSender<Vec<TeamVote>>,
-    tx_mission: mpsc::UnboundedSender<Vec<MissionVote>>,
-    tx_merlin:  mpsc::UnboundedSender<ID>,
+    tx_team:    Arc<Mutex<mpsc::UnboundedSender<Vec<ID>>>>,
+    tx_vote:    Arc<Mutex<mpsc::UnboundedSender<Vec<TeamVote>>>>,
+    tx_mission: Arc<Mutex<mpsc::UnboundedSender<Vec<MissionVote>>>>,
+    tx_merlin:  Arc<Mutex<mpsc::UnboundedSender<ID>>>,
 
-    votes: Vec<Option<TeamVote>>,
-    mission_votes: Vec<MissionVote>,
+    votes: Arc<Mutex<Vec<Option<TeamVote>>>>,
+    mission_votes: Arc<Mutex<Vec<MissionVote>>>,
 
     info: Arc<Mutex<GameInfo>>,
 }
@@ -207,27 +209,33 @@ impl GameClient {
             }
 
             if suggested_team.len() != info.expected_team_size as usize {
-                return Err("Team is not full".into())
+                let msg = format!("A team of {} people was expected and {} were selected",
+                                  info.expected_team_size, suggested_team.len());
+                return Err(msg.into())
             }
         }
 
-        self.tx_team.send(suggested_team.clone())?;
+        self.tx_team.lock().await.send(suggested_team.clone())?;
         Ok(())
     }
 
     pub async fn add_team_vote(&mut self, from: ID, vote: TeamVote) -> Result<(), Box<dyn Error>> {
-        self.votes[from as usize] = Some(vote);
+        let mut votes_ref = self.votes.lock().await;
+        let votes_ref = votes_ref.deref_mut();
 
-        if !self.votes.contains(&Option::None) {
-            let votes = self.votes.iter()
+        votes_ref[from as usize] = Some(vote);
+
+        if !votes_ref.contains(&Option::None) {
+            let votes = votes_ref.iter()
                 .map(|x| x.clone().unwrap())
                 .collect();
-            println!("send_team_votes");
-            self.tx_vote.send(votes)?;
-
-            for i in 0..self.votes.len() {
-                self.votes[i] = Option::None;
+            for i in 0..votes_ref.len() {
+                votes_ref[i] = Option::None;
             }
+            drop(votes_ref);
+
+            println!("send_team_votes");
+            self.tx_vote.lock().await.send(votes)?;
         }
         Ok(())
     }
@@ -244,37 +252,43 @@ impl GameClient {
                 return Err("Good player could vote only with Success".into())
             }
 
-            self.mission_votes.push(vote.clone());
+            let mut votes_ref = self.mission_votes.lock().await;
+            let votes_ref = votes_ref.deref_mut();
 
-            info.expected_team_size == self.mission_votes.len()
+            votes_ref.push(vote.clone());
+            info.expected_team_size == votes_ref.len()
         };
 
         if enough_votes {
-            self.tx_mission.send(self.mission_votes.clone())?;
-            self.mission_votes.clear();
+            let mut votes_ref = self.mission_votes.lock().await;
+            let votes_ref = votes_ref.deref_mut();
+            let votes = votes_ref.clone();
+            votes_ref.clear();
+            drop(votes_ref);
+            self.tx_mission.lock().await.send(votes)?;
         }
 
         Ok(())
     }
 
     pub async fn recv_event(&mut self) -> Result<GameEvent, Box<dyn Error>> {
-        let event = self.rx_event.recv().await
+        let event = self.rx_event.lock().await.recv().await
             .ok_or("Channel closed")?;
         Ok(event)
     }
 
     pub async fn send_mermaid_selection(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
-        self.tx_mermaid_selection.send(id)?;
+        self.tx_mermaid_selection.lock().await.send(id)?;
         Ok(())
     }
 
     pub async fn send_mermaid_word(&mut self, word: Team) -> Result<(), Box<dyn Error>> {
-        self.tx_mermaid_word.send(word)?;
+        self.tx_mermaid_word.lock().await.send(word)?;
         Ok(())
     }
 
     pub async fn send_merlin_check(&mut self, id: ID) -> Result<(), Box<dyn Error>> {
-        self.tx_merlin.send(id)?;
+        self.tx_merlin.lock().await.send(id)?;
         Ok(())
     }
 }
@@ -446,25 +460,26 @@ impl Game {
             info: info.clone(),
         };
 
-        let mut channels = GameClient {
-            rx_event,
+        let mut votes = Vec::new();
+        votes.resize(number, Option::None);
 
-            tx_mermaid_selection,
-            tx_mermaid_word,
-            tx_team,
-            tx_vote,
-            tx_mission,
-            tx_merlin,
+        let cli = GameClient {
+            rx_event: Arc::new(Mutex::new(rx_event)),
 
-            mission_votes: Vec::new(),
-            votes: Vec::new(),
+            tx_mermaid_selection: Arc::new(Mutex::new(tx_mermaid_selection)),
+            tx_mermaid_word: Arc::new(Mutex::new(tx_mermaid_word)),
+            tx_team: Arc::new(Mutex::new(tx_team)),
+            tx_vote: Arc::new(Mutex::new(tx_vote)),
+            tx_mission: Arc::new(Mutex::new(tx_mission)),
+            tx_merlin: Arc::new(Mutex::new(tx_merlin)),
+
+            mission_votes: Arc::new(Mutex::new(Vec::new())),
+            votes: Arc::new(Mutex::new(votes)),
 
             info: info.clone(),
         };
 
-        channels.votes.resize(number, Option::None);
-
-        (g, channels)
+        (g, cli)
     }
 
     async fn get_mermaid_check(&mut self) -> Result<ID, Box<dyn Error>> {
