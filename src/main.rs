@@ -39,48 +39,66 @@ struct GameSession {
 pub struct GameInfo {
     players: Vec<ChatId>,
     user_names: HashMap<ChatId, String>,
-    cli: Arc<Mutex<game::GameClient>>,
+    cli: game::GameClient,
 }
 
-fn get_game_session(ctx: &BotCtx, message: &Message) -> Option<Arc<Mutex<GameSession>>> {
+async fn get_game_session(ctx: &mut BotCtx, message: &Message) -> Option<Arc<Mutex<GameSession>>> {
     if let Some(game_id) = ctx.user_games.get(&message.chat.id) {
-        return ctx.game_sessions.get(game_id).cloned();
+        if let Some(session) = ctx.game_sessions.get(game_id).cloned() {
+            let session_id = session.lock().await.id;
+            // ID is set to zero when game is finished
+            if session_id == 0 {
+                drop(session);
+                ctx.game_sessions.remove(&session_id);
+                None
+            } else {
+                Some(session)
+            }
+        } else {
+            None
+        }
+    } else {
+        None
     }
-    None
 }
 
 async fn handle_start_bot<'a, I>(ctx: &mut BotCtx, message: &Message, mut cmd: I) -> ResponseResult<()>
     where I: Iterator<Item = &'a str>
 {
-    let bot = &ctx.bot;
-    if let Some(_) = get_game_session(ctx, message) {
-        bot.send_message(message.chat.id, "You are already in the game").await?;
-        bot.send_message(message.chat.id, "If you want to leave it, use /exit command, than join the link again").await?;
+    if let Some(_) = get_game_session(ctx, message).await {
+        ctx.bot.send_message(message.chat.id, "You are already in the game").await?;
+        ctx.bot.send_message(message.chat.id, "If you want to leave it, use /exit command, than join the link again").await?;
     } else {
         if let Some(param) = cmd.next() {
             if let Ok(game_id) = param.parse::<u32>() {
+                println!("Game ID: {}", game_id);
+                println!("Game sessions: {}",
+                         ctx.game_sessions.iter()
+                             .map(|(k, v)| { format!("{}", *k) })
+                             .collect::<Vec<_>>()
+                             .join(","));
                 if let Some(session) = ctx.game_sessions.get(&game_id) {
                     let session = session.lock().await;
-                    bot.send_message(message.chat.id, "You are joined the game. Wait for the game to start").await?;
+                    ctx.bot.send_message(message.chat.id, "You are joined the game. Wait for the game to start").await?;
                     let name = if let Some(user) = &message.from() {
                         user.first_name.clone()
                     } else {
                         message.chat.id.to_string()
                     };
 
-                    bot.send_message(session.leader, format!("{} joined the game", name)).await?;
+                    ctx.bot.send_message(session.leader, format!("{} joined the game", name)).await?;
                     ctx.user_games.insert(message.chat.id, game_id);
                     ctx.user_names.insert(message.chat.id, name);
                 } else {
-                    bot.send_message(message.chat.id, "Invalid game id!").await?;
+                    ctx.bot.send_message(message.chat.id, "Invalid game id!").await?;
                 }
             } else {
-                bot.send_message(message.chat.id, "Invalid game id!").await?;
+                ctx.bot.send_message(message.chat.id, "Invalid game id!").await?;
             }
         } else {
-            bot.send_message(message.chat.id, "Welcome to The Resistance Avalon Bot!").await?;
-            bot.send_message(message.chat.id, "Use /new_game command to create game session").await?;
-            bot.send_message(message.chat.id, "Or join existing game using invite link").await?;
+            ctx.bot.send_message(message.chat.id, "Welcome to The Resistance Avalon Bot!").await?;
+            ctx.bot.send_message(message.chat.id, "Use /new_game command to create game session").await?;
+            ctx.bot.send_message(message.chat.id, "Or join existing game using invite link").await?;
         }
     }
 
@@ -89,15 +107,14 @@ async fn handle_start_bot<'a, I>(ctx: &mut BotCtx, message: &Message, mut cmd: I
 
 async fn handle_exit(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let session = session.lock().await;
-        bot.send_message(message.chat.id, "You left the game").await?;
+        ctx.bot.send_message(message.chat.id, "You left the game").await?;
         let username = ctx.user_names.get(&message.chat.id).unwrap();
-        bot.send_message(session.leader, format!("{} left the game", username)).await?;
+        ctx.bot.send_message(session.leader, format!("{} left the game", username)).await?;
         ctx.user_games.remove(&message.chat.id);
     } else {
-        bot.send_message(message.chat.id, "You are not in the game").await?;
+        ctx.bot.send_message(message.chat.id, "You are not in the game").await?;
     }
 
     respond(())
@@ -105,10 +122,9 @@ async fn handle_exit(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 
 async fn handle_new_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
-    let bot = &ctx.bot;
-    if let Some(_) = get_game_session(ctx, message) {
-        bot.send_message(message.chat.id, "You are already in the game").await?;
-        bot.send_message(message.chat.id, "If you want to leave it, use /exit command, than join the link again").await?;
+    if let Some(_) = get_game_session(ctx, message).await {
+        ctx.bot.send_message(message.chat.id, "You are already in the game").await?;
+        ctx.bot.send_message(message.chat.id, "If you want to leave it, use /exit command, than join the link again").await?;
     } else {
         let game_id = ctx.last_game_id + 1;
         let session = GameSession {
@@ -131,11 +147,11 @@ async fn handle_new_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<
         ctx.user_names.insert(message.chat.id, name);
 
         let id = message.chat.id;
-        bot.send_message(id, "Starting a new game...").await?;
-        bot.send_message(id, "Send the following invite link to your team").await?;
+        ctx.bot.send_message(id, "Starting a new game...").await?;
+        ctx.bot.send_message(id, "Send the following invite link to your team").await?;
         let url = format!("https://t.me/{}?start={}", BOT_TG_ADDR, game_id);
-        bot.send_message(id, url).await?;
-        bot.send_message(id, "When everybody is joined use /start_game").await?;
+        ctx.bot.send_message(id, url).await?;
+        ctx.bot.send_message(id, "When everybody is joined use /start_game").await?;
     }
 
     respond(())
@@ -162,7 +178,7 @@ fn control_message_to_string(control: &game_msg::ControlMessage) -> String {
     format!("{}:\n{}", control.message, commands.join("\n"))
 }
 
-async fn process_game_event(session: &mut GameSession, event: GameEvent, bot: &Bot, info: &GameInfo) -> Result<(), Box<dyn Error>>
+async fn process_game_event(session: &mut GameSession, event: &GameEvent, bot: &Bot, info: &GameInfo) -> Result<(), Box<dyn Error>>
 {
     println!(">process_game_event");
     let messages = game_msg::build_message_for_event(info, event.clone()).await?;
@@ -191,7 +207,7 @@ async fn process_game_event(session: &mut GameSession, event: GameEvent, bot: &B
                     game_msg::Dst::User(id) => {
                         println!("Message '{}' to {}", message, id);
                         let res = bot.send_message(id, message).await?;
-                        if let GameEvent::Turn(crown_id, team_size) = &event {
+                        if let GameEvent::Turn(crown_id, team_size) = event {
                             session.suggestion = Some(SuggestionInfo {
                                 msg_id: res.id,
                                 crown_id: *crown_id,
@@ -205,14 +221,17 @@ async fn process_game_event(session: &mut GameSession, event: GameEvent, bot: &B
         }
     }
 
+    if let GameEvent::GameResult(_) = event {
+        session.id = 0;
+    }
+
     println!("<process_game_event");
     Ok(())
 }
 
 async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
-    let bot = &ctx.bot;
-    if let Some(session_arc) = get_game_session(ctx, message) {
+    if let Some(session_arc) = get_game_session(ctx, message).await {
         let mut session = session_arc.lock().await;
         if session.leader == message.chat.id {
             let players = ctx.user_games.iter()
@@ -222,14 +241,14 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
 
             let start_msg = format!("Game started with {} players!", players.len());
             for player in &players {
-                bot.send_message(*player, &start_msg).await?;
+                ctx.bot.send_message(*player, &start_msg).await?;
             }
 
             let (mut game, cli) = game::Game::setup(players.len());
 
             let roles = cli.get_player_roles().await;
             for (player, role) in players.iter().zip(roles) {
-                bot.send_message(*player, format!("Your role is {}", role.to_string())).await?;
+                ctx.bot.send_message(*player, format!("Your role is {}", role.to_string())).await?;
             }
 
             let crown_id = cli.get_crown_id().await;
@@ -246,8 +265,8 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
                 let crown_name = if *player == crown_chat_id { "You" } else { crown_name };
                 let mermaid_name = if *player == mermaid_chat_id { "You" } else { mermaid_name };
 
-                bot.send_message(*player, format!("{} has the crown", crown_name)).await?;
-                bot.send_message(*player, format!("{} has the mermaid", mermaid_name)).await?;
+                ctx.bot.send_message(*player, format!("{} has the crown", crown_name)).await?;
+                ctx.bot.send_message(*player, format!("{} has the mermaid", mermaid_name)).await?;
             }
 
             let user_names = {
@@ -261,7 +280,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
 
             let info = GameInfo {
                 players,
-                cli: Arc::new(Mutex::new(cli)),
+                cli: cli.clone(),
                 user_names,
             };
 
@@ -274,25 +293,32 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
                 }
             });
 
-            let bot = bot.clone();
+            let bot = ctx.bot.clone();
             tokio::spawn(async move {
                 let info = info.clone();
                 let session = session_arc.clone();
                 loop {
                     println!("Event processing iteration");
-                    let event = info.cli.lock().await.recv_event().await.unwrap();
+                    let event = info.cli.clone().recv_event().await.unwrap();
                     let mut session = session.lock().await;
-                    if let Err(e) = process_game_event(session.deref_mut(), event, &bot, &info).await {
+                    if let Err(e) = process_game_event(session.deref_mut(), &event, &bot, &info).await {
                         println!("Event processing error: {}", e);
                         break;
                     }
+
+                    if let GameEvent::GameResult(_) = &event {
+                        session.id = 0;
+                        break;
+                    }
                 }
+
+
             });
         } else {
-            bot.send_message(message.chat.id, "Only game leader can start the game").await?;
+            ctx.bot.send_message(message.chat.id, "Only game leader can start the game").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
@@ -308,20 +334,25 @@ fn get_user_id(info: &GameInfo, chat_id: ChatId) -> game::ID {
 async fn handle_finish_suggestion(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
     println!(">handle_finish_suggestion");
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         if let Some(suggestion) = session.suggestion.take() {
             let info = session.info.as_mut().unwrap();
-            let mut cli = info.cli.lock().await;
+            let mut cli = info.cli.clone();
 
             let user_id = get_user_id(info, message.chat.id);
-            cli.suggest_team(user_id, &suggestion.users).await;
+            if let Err(e) = cli.suggest_team(user_id, &suggestion.users).await {
+                ctx.bot.send_message(message.chat.id, e.to_string()).await?;
+                // In case of error, restore the suggestion
+                session.suggestion = Some(suggestion);
+            } else {
+                ctx.bot.send_message(message.chat.id, "Suggestion sent").await?;
+            }
         } else {
-            bot.send_message(message.chat.id, "No suggestion in progress").await?;
+            ctx.bot.send_message(message.chat.id, "No suggestion in progress").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     println!("<handle_finish_suggestion");
@@ -330,8 +361,7 @@ async fn handle_finish_suggestion(ctx: &mut BotCtx, message: &Message) -> Respon
 
 async fn handle_team_suggestion(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
     println!(">handle_team_suggestion");
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_ref().unwrap().clone();
 
@@ -351,18 +381,18 @@ async fn handle_team_suggestion(ctx: &mut BotCtx, message: &Message) -> Response
                     assert_ne!(ctrl_msg.dst, game_msg::Dst::All);
                     let text_msg = control_message_to_string(&ctrl_msg);
                     println!("Suggestion state: {}", text_msg);
-                    bot.edit_message_text(message.chat.id, suggestions.msg_id, text_msg).await?;
+                    ctx.bot.edit_message_text(message.chat.id, suggestions.msg_id, text_msg).await?;
                 } else {
-                    bot.send_message(message.chat.id, "Invalid suggestion command").await?;
+                    ctx.bot.send_message(message.chat.id, "Invalid suggestion command").await?;
                 }
             } else {
-                bot.send_message(message.chat.id, "Invalid suggestion command").await?;
+                ctx.bot.send_message(message.chat.id, "Invalid suggestion command").await?;
             }
         } else {
-            bot.send_message(message.chat.id, "No suggestion in progress").await?;
+            ctx.bot.send_message(message.chat.id, "No suggestion in progress").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     println!("<handle_team_suggestion");
@@ -370,11 +400,10 @@ async fn handle_team_suggestion(ctx: &mut BotCtx, message: &Message) -> Response
 }
 
 async fn handle_team_vote(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
-        let mut cli = info.cli.lock().await;
+        let mut cli = info.cli.clone();
         let user_id = info.players.iter().position(|&id| { id == message.chat.id }).unwrap() as u8;
         let vote_cmd = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(vote) = vote_cmd.get(1) {
@@ -386,25 +415,24 @@ async fn handle_team_vote(ctx: &mut BotCtx, message: &Message) -> ResponseResult
                     cli.add_team_vote(user_id, TeamVote::Reject).await.unwrap();
                 },
                 _ => {
-                    bot.send_message(message.chat.id, "Invalid vote command").await?;
+                    ctx.bot.send_message(message.chat.id, "Invalid vote command").await?;
                 }
             }
         } else {
-            bot.send_message(message.chat.id, "Invalid vote command").await?;
+            ctx.bot.send_message(message.chat.id, "Invalid vote command").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
 }
 
 async fn handle_mission_result(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
-        let mut cli = info.cli.lock().await;
+        let mut cli = info.cli.clone();
         let user_id = info.players.iter().position(|&id| { id == message.chat.id }).unwrap() as u8;
         let result_cmd = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(vote) = result_cmd.get(1) {
@@ -416,48 +444,46 @@ async fn handle_mission_result(ctx: &mut BotCtx, message: &Message) -> ResponseR
                     cli.submit_for_mission(user_id, MissionVote::Fail).await.unwrap();
                 },
                 _ => {
-                    bot.send_message(message.chat.id, "Invalid result command").await?;
+                    ctx.bot.send_message(message.chat.id, "Invalid result command").await?;
                 }
             }
         } else {
-            bot.send_message(message.chat.id, "Invalid result command").await?;
+            ctx.bot.send_message(message.chat.id, "Invalid result command").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
 }
 
 async fn handle_mermaid(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
-        let mut cli = info.cli.lock().await;
+        let mut cli = info.cli.clone();
         let mermaid_cmd = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(check_id) = mermaid_cmd.get(1) {
             if let Some(check_id) = check_id.parse::<u8>().ok() {
                 cli.send_mermaid_selection(check_id).await.unwrap();
             } else {
-                bot.send_message(message.chat.id, "Invalid mermaid command").await?;
+                ctx.bot.send_message(message.chat.id, "Invalid mermaid command").await?;
             }
         } else {
-            bot.send_message(message.chat.id, "Invalid mermaid command").await?;
+            ctx.bot.send_message(message.chat.id, "Invalid mermaid command").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
 }
 
 async fn handle_mermaid_word(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
-        let mut cli = info.cli.lock().await;
+        let mut cli = info.cli.clone();
         let mermaid_word = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(word) = mermaid_word.get(1) {
             match *word {
@@ -468,37 +494,36 @@ async fn handle_mermaid_word(ctx: &mut BotCtx, message: &Message) -> ResponseRes
                     cli.send_mermaid_word(Team::Bad).await.unwrap();
                 },
                 _ => {
-                    bot.send_message(message.chat.id, "Invalid mermaid word").await?;
+                    ctx.bot.send_message(message.chat.id, "Invalid mermaid word").await?;
                 }
             }
         } else {
-            bot.send_message(message.chat.id, "Invalid mermaid word").await?;
+            ctx.bot.send_message(message.chat.id, "Invalid mermaid word").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
 }
 
 async fn handle_last_chance(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    let bot = &ctx.bot;
-    if let Some(session) = get_game_session(ctx, message) {
+    if let Some(session) = get_game_session(ctx, message).await {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
-        let mut cli = info.cli.lock().await;
+        let mut cli = info.cli.clone();
         let merlin_cmd = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(merlin_id) = merlin_cmd.get(1) {
             if let Some(merlin_id) = merlin_id.parse::<u8>().ok() {
                 cli.send_merlin_check(merlin_id).await.unwrap();
             } else {
-                bot.send_message(message.chat.id, "Invalid last chance command").await?;
+                ctx.bot.send_message(message.chat.id, "Invalid last chance command").await?;
             }
         } else {
-            bot.send_message(message.chat.id, "Invalid last chance command").await?;
+            ctx.bot.send_message(message.chat.id, "Invalid last chance command").await?;
         }
     } else {
-        send_not_in_game(bot, message).await?;
+        send_not_in_game(&ctx.bot, message).await?;
     }
 
     respond(())
@@ -513,60 +538,60 @@ async fn handle_tg_message(bot: Bot, message: Message, ctx: Arc<Mutex<BotCtx>>) 
         let args = input;
         match cmd {
             "/start" => {
-                return handle_start_bot(ctx.deref_mut(), &message, args).await;
+                handle_start_bot(ctx.deref_mut(), &message, args).await
             }
             "/new_game" => {
-                return handle_new_game(ctx.deref_mut(), &message).await;
+                handle_new_game(ctx.deref_mut(), &message).await
             }
             "/start_game" => {
-                return handle_start_game(ctx.deref_mut(), &message).await;
+                handle_start_game(ctx.deref_mut(), &message).await
             }
             "/exit" => {
-                return handle_exit(ctx.deref_mut(), &message).await;
+                handle_exit(ctx.deref_mut(), &message).await
             }
 
             "/suggest_finish" => {
-                return handle_finish_suggestion(ctx.deref_mut(), &message).await;
+                handle_finish_suggestion(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/suggest") => {
-                return handle_team_suggestion(ctx.deref_mut(), &message).await;
+                handle_team_suggestion(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/team") => {
-                return handle_team_vote(ctx.deref_mut(), &message).await;
+                handle_team_vote(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/mission") => {
-                return handle_mission_result(ctx.deref_mut(), &message).await;
+                handle_mission_result(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/mermaid") => {
-                return handle_mermaid(ctx.deref_mut(), &message).await;
+                handle_mermaid(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/say") => {
-                return handle_mermaid_word(ctx.deref_mut(), &message).await;
+                handle_mermaid_word(ctx.deref_mut(), &message).await
             }
 
             cmd if cmd.starts_with("/merlin") => {
-                return handle_last_chance(ctx.deref_mut(), &message).await;
+                handle_last_chance(ctx.deref_mut(), &message).await
             }
 
             _ => {
                 bot.send_message(message.chat.id, "Unknown command").await?;
-                return respond(());
+                respond(())
             }
         }
+    } else {
+        respond(())
     }
-
-    respond(())
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bot = Bot::from_env();
-    let mut ctx = Arc::new(Mutex::new(BotCtx {
+    let ctx = Arc::new(Mutex::new(BotCtx {
         bot: bot.clone(),
         last_game_id: 0,
         user_games: HashMap::new(),

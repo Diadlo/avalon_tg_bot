@@ -1,6 +1,6 @@
 use std::fmt;
 use std::{error::Error, sync::Arc};
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::vec::Vec;
 use rand::Rng;
 use rand::seq::SliceRandom;
@@ -43,6 +43,7 @@ impl fmt::Display for Team {
 }
 
 #[derive(PartialEq, Clone, Debug)]
+#[allow(dead_code)]
 pub enum Role {
     Mordred,
     Morgen,
@@ -199,6 +200,11 @@ impl GameClient {
     pub async fn get_mermaid_id(&self) -> ID {
         let info = self.info.lock().await;
         info.mermaid_id
+    }
+
+    pub async fn get_mission_results(&self) -> Vec<MissionVote> {
+        let info = self.info.lock().await;
+        info.missions.clone()
     }
 
     pub async fn suggest_team(&mut self, from: ID, suggested_team: &Vec<ID>) -> Result<(), Box<dyn Error + Send + Sync>> {

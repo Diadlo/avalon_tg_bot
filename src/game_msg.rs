@@ -36,7 +36,7 @@ struct SuggestionUser {
 }
 
 impl GameMessage {
-    fn turn(crown_name: &str, team_size: usize, results: Vec<MissionVote>) -> Self {
+    fn turn(crown_name: &str, team_size: usize, results: &Vec<MissionVote>) -> Self {
         let mission_history = results.iter()
             .map(|vote| {
                 if vote == &MissionVote::Success { "🏆" } else { "🗡️" }
@@ -44,10 +44,17 @@ impl GameMessage {
             .collect::<Vec<_>>()
             .join(" ");
 
-        let mission_chose = format!("{} chooses a team of {} people", crown_name, team_size),
+        let mission_chose = format!("{} chooses a team of {} people", crown_name, team_size);
+
+        let history_str = if mission_history.len() != 0 {
+            format!("Missions: {}\n", mission_history)
+        } else {
+            format!("")
+        };
+
         Self::Notification(Notification {
             dst: Dst::All,
-            message: format!("{}\n{}", mission_history, mission_chose),
+            message: format!("{}{}", history_str, mission_chose),
         })
     }
 
@@ -237,6 +244,15 @@ impl GameMessage {
             message: message.to_string(),
         })
     }
+
+    fn restart() -> Self {
+        let message = "You can start new game using /new_game";
+
+        Self::Notification(Notification {
+            dst: Dst::All,
+            message: message.to_string(),
+        })
+    }
 }
 
 fn get_user_chat_id(info: &GameInfo, id: u8) -> ChatId {
@@ -254,6 +270,8 @@ fn get_user_name_by_chat<'a>(info: &'a GameInfo, chat_id: &ChatId) -> &'a str {
 
 pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Result<Vec<GameMessage>, Box<dyn Error>>
 {
+    println!();
+    println!("Event: {:?}", event);
     match event {
         GameEvent::Turn(crown_id, team_size) => {
             println!("Turn: crown_id={} team_size={}", crown_id, team_size);
@@ -271,8 +289,10 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
                 })
                 .collect::<Vec<_>>();
 
+            let results = info.cli.get_mission_results().await;
+
             Ok(vec![
-                GameMessage::turn(crown_name, team_size, &info.results),
+                GameMessage::turn(crown_name, team_size, &results),
                 GameMessage::turn_ctrl(crown_chat_id, team_size, &users)
             ])
         },
@@ -372,7 +392,10 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
             Ok(vec![GameMessage::announce_merlin(merlin_name)])
         },
         GameEvent::GameResult(result) => {
-            Ok(vec![GameMessage::game_result(result)])
+            Ok(vec![
+                GameMessage::game_result(result),
+                GameMessage::restart(),
+            ])
         },
     }
 }
