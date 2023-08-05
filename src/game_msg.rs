@@ -174,8 +174,8 @@ impl GameMessage {
         })
     }
 
-    fn mermaid_word(user: &str, team: Team) -> Self {
-        let message = format!("Mermaid says {} is {}", user, team);
+    fn mermaid_word(mermaid_name: &str, user: &str, team: Team) -> Self {
+        let message = format!("{} says {} is {}", mermaid_name, user, team);
 
         Self::Notification(Notification {
             dst: Dst::All,
@@ -342,7 +342,9 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
         },
         GameEvent::MermaidSays(checked_user, team) => {
             let checked_user_name = get_user_name(info, checked_user);
-            Ok(vec![GameMessage::mermaid_word(checked_user_name, team)])
+            let mermaid_id = info.cli.get_mermaid_id().await;
+            let mermaid_user_name = get_user_name(info, mermaid_id);
+            Ok(vec![GameMessage::mermaid_word(mermaid_user_name, checked_user_name, team)])
         },
         GameEvent::BadLastChance(bad_team, guesser) => {
             let bad_team_names = bad_team.iter().map(|id| {
