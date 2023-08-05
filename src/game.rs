@@ -709,8 +709,7 @@ impl Game {
             self.notify_mission_result(&mission_votes)?;
 
             println!("Mission idx: {}", mission_idx);
-            // TODO: Check size of team
-            if mission_idx > 1 && mission_idx < 5 {
+            if number_of_players >= 7 && 1 < mission_idx && mission_idx < 5 {
                 println!("Waiting for mermaid selection");
                 let mermaid_check = self.get_mermaid_check().await?;
                 let mermaid_result = self.get_player_team(mermaid_check).await;
