@@ -716,7 +716,11 @@ impl Game {
             self.notify_mission_result(&mission_votes)?;
 
             println!("Mission idx: {}", mission_idx);
-            if number_of_players >= 7 && 1 < mission_idx && mission_idx < 5 {
+            let is_end_of_game = self.calc_winner().await != None;
+            let is_mermaid_in_game = number_of_players >= 7;
+            let is_time_to_use_mermaid = 1 < mission_idx && mission_idx < 5;
+
+            if is_mermaid_in_game && is_time_to_use_mermaid && !is_end_of_game {
                 println!("Waiting for mermaid selection");
                 let mermaid_check = self.get_mermaid_check().await?;
                 let mermaid_result = self.get_player_team(mermaid_check).await;
@@ -1053,11 +1057,7 @@ mod tests {
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
-                    mermaid_check: Some(MermaidCheck {
-                        holder: Role::Good,
-                        selection: Role::Good2,
-                        word: Team::Good,
-                    }),
+                    mermaid_check: None,
                 }
             ],
             merlin_check: Some(1),
@@ -1095,11 +1095,7 @@ mod tests {
                     team_votes: vec![TeamVote::Approve; 7],
                     try_count: 1,
                     mission_votes: vec![MissionVote::Success, MissionVote::Success, MissionVote::Success],
-                    mermaid_check: Some(MermaidCheck {
-                        holder: Role::Good,
-                        selection: Role::Merlin,
-                        word: Team::Good,
-                    }),
+                    mermaid_check: None,
                 }
             ],
             merlin_check: Some(0), // 0 is Merlin
