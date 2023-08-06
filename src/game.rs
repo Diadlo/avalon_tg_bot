@@ -139,8 +139,8 @@ pub enum GameEvent {
     TeamRejected(u8), // Try count
     MissionResult(Vec<MissionVote>),
     Mermaid(ID), // Mermaid ID
-    MermaidResult(ID, ID, Team), // Mermaid ID, checked player ID, team
-    MermaidSays(ID, Team), // Mermaid says who is player with ID
+    MermaidResult(ID, ID, Team), // Mermaid holder ID, checked player ID, team
+    MermaidSays(ID, ID, Team), // Mermaid holder ID, checked user ID and Mermaid holder word
     BadLastChance(Vec<ID>, ID), // Bad team looses main part and tries to guess Merlin
                                       // Parameters are bad team and the person who should guess Merlin
     Merlin(ID), // Actual merlin ID
@@ -593,7 +593,8 @@ impl Game {
     }
 
     async fn send_mermaid_word(&mut self, user: ID, word: Team) -> Result<(), Box<dyn Error>> {
-        self.tx_event.send(GameEvent::MermaidSays(user, word))?;
+        let info = self.info.lock().await;
+        self.tx_event.send(GameEvent::MermaidSays(info.mermaid_id, user, word))?;
         Ok(())
     }
 
@@ -982,7 +983,8 @@ mod tests {
                     cli.send_mermaid_word(mermaid.word.clone()).await.unwrap();
 
                     match recv_event(&mut cli).await {
-                        GameEvent::MermaidSays(user_id, word) => {
+                        GameEvent::MermaidSays(mermaid_id, user_id, word) => {
+                            assert_eq!(mermaid_id, holder_id);
                             assert_eq!(user_id, selection_id);
                             assert_eq!(word, mermaid.word);
                         },

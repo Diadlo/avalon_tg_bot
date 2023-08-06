@@ -150,7 +150,7 @@ impl GameMessage {
         })
     }
 
-    fn mermaid_ctrl(users: &[(u8, &str)]) -> Self {
+    fn mermaid_ctrl(mermaid_chat: ChatId, users: &[(u8, &str)]) -> Self {
         let users = users.iter()
             .map(|(id, name)| {
                 format!("mermaid_{} {}", id, name)
@@ -158,14 +158,14 @@ impl GameMessage {
             .collect::<Vec<_>>();
 
         Self::ControlMessage(ControlMessage {
-            dst: Dst::All,
+            dst: Dst::User(mermaid_chat),
             message: "Use mermaid. Select user to check".to_string(),
             commands: users,
         })
     }
 
     fn mermaid_result(mermaid_id: ChatId, user: &str, team: Team) -> Self {
-        let message = format!("Mermaid says {} is {}", user, team);
+        let message = format!("Mermaid sees that {} is {}", user, team);
 
         Self::Notification(Notification {
             dst: Dst::User(mermaid_id),
@@ -182,7 +182,7 @@ impl GameMessage {
     }
 
     fn mermaid_word(mermaid_name: &str, user: &str, team: Team) -> Self {
-        let message = format!("{} says {} is {}", mermaid_name, user, team);
+        let message = format!("🧜‍️{} says {} is {}", mermaid_name, user, team);
 
         Self::Notification(Notification {
             dst: Dst::All,
@@ -335,6 +335,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
         GameEvent::Mermaid(mermaid_id) => {
             let mermaid_name = get_user_name(info, mermaid_id);
             let player_num = info.players.len() as u8;
+            let mermaid_chat = get_user_chat_id(info, mermaid_id);
 
             let users = (0..player_num)
                 .filter(|id| *id != mermaid_id)
@@ -346,7 +347,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
 
             Ok(vec![
                 GameMessage::mermaid_turn(mermaid_name),
-                GameMessage::mermaid_ctrl(&users),
+                GameMessage::mermaid_ctrl(mermaid_chat, &users),
             ])
         },
         GameEvent::MermaidResult(mermaid_id, checked_user, team) => {
@@ -359,9 +360,8 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
                 GameMessage::mermaid_word_ctrl(mermaid_chat_id),
             ])
         },
-        GameEvent::MermaidSays(checked_user, team) => {
+        GameEvent::MermaidSays(mermaid_id, checked_user, team) => {
             let checked_user_name = get_user_name(info, checked_user);
-            let mermaid_id = info.cli.get_mermaid_id().await;
             let mermaid_user_name = get_user_name(info, mermaid_id);
             Ok(vec![GameMessage::mermaid_word(mermaid_user_name, checked_user_name, team)])
         },
