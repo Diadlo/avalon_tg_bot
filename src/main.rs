@@ -38,6 +38,7 @@ struct GameSession {
 // TODO: Move out to separate file
 #[derive(Clone)]
 pub struct GameInfo {
+    leader: ChatId,
     players: Vec<ChatId>,
     user_names: HashMap<ChatId, String>,
     cli: game::GameClient,
@@ -63,6 +64,15 @@ async fn get_game_session(ctx: &mut BotCtx, message: &Message) -> Option<Arc<Mut
     }
 }
 
+fn get_game_session_without_cleanup(ctx: &mut BotCtx, message: &Message) -> Option<Arc<Mutex<GameSession>>>
+{
+    if let Some(game_id) = ctx.user_games.get(&message.chat.id) {
+        ctx.game_sessions.get(game_id).cloned()
+    } else {
+        None
+    }
+}
+
 async fn handle_start_bot<'a, I>(ctx: &mut BotCtx, message: &Message, mut cmd: I) -> ResponseResult<()>
     where I: Iterator<Item = &'a str>
 {
@@ -75,7 +85,7 @@ async fn handle_start_bot<'a, I>(ctx: &mut BotCtx, message: &Message, mut cmd: I
                 println!("Game ID: {}", game_id);
                 println!("Game sessions: {}",
                          ctx.game_sessions.iter()
-                             .map(|(k, v)| { format!("{}", *k) })
+                             .map(|(k, _v)| { format!("{}", *k) })
                              .collect::<Vec<_>>()
                              .join(","));
                 if let Some(session) = ctx.game_sessions.get(&game_id) {
@@ -159,6 +169,20 @@ async fn handle_new_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<
     respond(())
 }
 
+async fn handle_restart(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
+{
+    println!(">handle_restart");
+    if let Some(session_arc) = get_game_session_without_cleanup(ctx, message) {
+        session_arc.lock().await.finished = false;
+        handle_start_game(ctx, &message).await?
+    } else {
+        send_not_in_game(&ctx.bot, message).await?
+    }
+
+    println!("<handle_restart");
+    respond(())
+}
+
 async fn send_everybody(bot: &Bot, info: &GameInfo, msg: &str) {
     for player in &info.players {
         println!("Message '{}' to {}", msg, *player);
@@ -233,6 +257,7 @@ async fn process_game_event(session: &mut GameSession, event: &GameEvent, bot: &
 
 async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
+    println!(">handle_start_game");
     if let Some(session_arc) = get_game_session(ctx, message).await {
         let mut session = session_arc.lock().await;
         if session.leader == message.chat.id {
@@ -281,6 +306,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
             };
 
             let info = GameInfo {
+                leader: session.leader,
                 players,
                 cli: cli.clone(),
                 user_names,
@@ -299,7 +325,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
             tokio::spawn(async move {
                 let info = info.clone();
                 let session = session_arc.clone();
-                loop {
+                while !session.lock().await.finished {
                     println!("Event processing iteration");
                     let event = info.cli.clone().recv_event().await.unwrap();
                     let mut session = session.lock().await;
@@ -307,14 +333,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
                         println!("Event processing error: {}", e);
                         break;
                     }
-
-                    if let GameEvent::GameResult(_) = &event {
-                        session.id = 0;
-                        break;
-                    }
                 }
-
-
             });
         } else {
             ctx.bot.send_message(message.chat.id, "Only game leader can start the game").await?;
@@ -323,6 +342,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
         send_not_in_game(&ctx.bot, message).await?;
     }
 
+    println!("<handle_start_game");
     respond(())
 }
 
@@ -438,16 +458,19 @@ async fn handle_mission_result(ctx: &mut BotCtx, message: &Message) -> ResponseR
         let user_id = info.players.iter().position(|&id| { id == message.chat.id }).unwrap() as u8;
         let result_cmd = message.text().unwrap().split("_").collect::<Vec<_>>();
         if let Some(vote) = result_cmd.get(1) {
-            match *vote {
+            let result = match *vote {
                 "success" => {
-                    cli.submit_for_mission(user_id, MissionVote::Success).await.unwrap();
+                    cli.submit_for_mission(user_id, MissionVote::Success).await
                 },
                 "fail" => {
-                    cli.submit_for_mission(user_id, MissionVote::Fail).await.unwrap();
+                    cli.submit_for_mission(user_id, MissionVote::Fail).await
                 },
                 _ => {
-                    ctx.bot.send_message(message.chat.id, "Invalid result command").await?;
+                    Err("Invalid result command".into())
                 }
+            };
+            if let Err(err) = result {
+                ctx.bot.send_message(message.chat.id, format!("{}", err)).await?;
             }
         } else {
             ctx.bot.send_message(message.chat.id, "Invalid result command").await?;
@@ -544,6 +567,9 @@ async fn handle_tg_message(bot: Bot, message: Message, ctx: Arc<Mutex<BotCtx>>) 
             }
             "/new_game" => {
                 handle_new_game(ctx.deref_mut(), &message).await
+            }
+            "/restart" => {
+                handle_restart(ctx.deref_mut(), &message).await
             }
             "/start_game" => {
                 handle_start_game(ctx.deref_mut(), &message).await

@@ -246,7 +246,7 @@ impl GameClient {
         Ok(())
     }
 
-    pub async fn submit_for_mission(&mut self, from: ID, vote: MissionVote) -> Result<(), Box<dyn Error>> {
+    pub async fn submit_for_mission(&mut self, from: ID, vote: MissionVote) -> Result<(), Box<dyn Error + Send + Sync>> {
         let enough_votes = {
             let info = self.info.lock().await;
 

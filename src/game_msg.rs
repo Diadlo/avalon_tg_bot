@@ -220,7 +220,7 @@ impl GameMessage {
 
         Self::ControlMessage(ControlMessage {
             dst: Dst::User(guesser_id),
-            message: "Enter /merlin <id> to check user".to_string(),
+            message: "Select user to check".to_string(),
             commands: good_team,
         })
     }
@@ -245,12 +245,11 @@ impl GameMessage {
         })
     }
 
-    fn restart() -> Self {
-        let message = "You can start new game using /new_game";
-
-        Self::Notification(Notification {
-            dst: Dst::All,
-            message: message.to_string(),
+    fn restart(leader: ChatId) -> Self {
+        Self::ControlMessage(ControlMessage {
+            dst: Dst::User(leader),
+            message: "You could start a new game or restart with the same group".to_string(),
+            commands: vec!["new_game".to_string(), "restart".to_string()],
         })
     }
 }
@@ -394,7 +393,7 @@ pub async fn build_message_for_event(info: &GameInfo, event: GameEvent) -> Resul
         GameEvent::GameResult(result) => {
             Ok(vec![
                 GameMessage::game_result(result),
-                GameMessage::restart(),
+                GameMessage::restart(info.leader),
             ])
         },
     }
