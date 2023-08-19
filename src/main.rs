@@ -293,6 +293,7 @@ async fn handle_start_game(ctx: &mut BotCtx, message: &Message) -> ResponseResul
                 let mermaid_name = if *player == mermaid_chat_id { "You" } else { mermaid_name };
 
                 ctx.bot.send_message(*player, format!("{} has the crown", crown_name)).await?;
+                // TODO: Print only if number of players is enough
                 ctx.bot.send_message(*player, format!("{} has the mermaid", mermaid_name)).await?;
             }
 
