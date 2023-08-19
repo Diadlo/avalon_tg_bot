@@ -118,7 +118,7 @@ async fn handle_start_bot<'a, I>(ctx: &mut BotCtx, message: &Message, mut cmd: I
 
 async fn handle_exit(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let session = session.lock().await;
         ctx.bot.send_message(message.chat.id, "You left the game").await?;
         let username = ctx.user_names.get(&message.chat.id).unwrap();
@@ -357,7 +357,7 @@ fn get_user_id(info: &GameInfo, chat_id: ChatId) -> game::ID {
 async fn handle_finish_suggestion(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()>
 {
     println!(">handle_finish_suggestion");
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         if let Some(suggestion) = session.suggestion.take() {
             let info = session.info.as_mut().unwrap();
@@ -384,7 +384,7 @@ async fn handle_finish_suggestion(ctx: &mut BotCtx, message: &Message) -> Respon
 
 async fn handle_team_suggestion(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
     println!(">handle_team_suggestion");
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_ref().unwrap().clone();
 
@@ -423,7 +423,7 @@ async fn handle_team_suggestion(ctx: &mut BotCtx, message: &Message) -> Response
 }
 
 async fn handle_team_vote(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
         let mut cli = info.cli.clone();
@@ -452,7 +452,7 @@ async fn handle_team_vote(ctx: &mut BotCtx, message: &Message) -> ResponseResult
 }
 
 async fn handle_mission_result(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
         let mut cli = info.cli.clone();
@@ -484,7 +484,7 @@ async fn handle_mission_result(ctx: &mut BotCtx, message: &Message) -> ResponseR
 }
 
 async fn handle_mermaid(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
         let mut cli = info.cli.clone();
@@ -506,7 +506,7 @@ async fn handle_mermaid(ctx: &mut BotCtx, message: &Message) -> ResponseResult<(
 }
 
 async fn handle_mermaid_word(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
         let mut cli = info.cli.clone();
@@ -534,7 +534,7 @@ async fn handle_mermaid_word(ctx: &mut BotCtx, message: &Message) -> ResponseRes
 }
 
 async fn handle_last_chance(ctx: &mut BotCtx, message: &Message) -> ResponseResult<()> {
-    if let Some(session) = get_game_session(ctx, message).await {
+    if let Some(session) = get_game_session_without_cleanup(ctx, message) {
         let mut session = session.lock().await;
         let info = session.info.as_mut().unwrap();
         let mut cli = info.cli.clone();
