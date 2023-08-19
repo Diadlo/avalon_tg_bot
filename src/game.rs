@@ -827,7 +827,7 @@ mod tests {
     }
 
     fn mission_result_are_equal(a: &Vec<MissionVote>, b: &Vec<MissionVote>) -> bool {
-        assert!(a.len() == b.len());
+        assert_eq!(a.len(), b.len());
         let a_success_cnt = a.iter().filter(|x| **x == MissionVote::Success).count();
         let b_success_cnt = b.iter().filter(|x| **x == MissionVote::Success).count();
         return a_success_cnt == b_success_cnt;
